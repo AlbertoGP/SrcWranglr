@@ -59,6 +59,9 @@ impl SrcWranglrApp {
             self.note_confirmed_bug(finding, &note);
             return;
         }
+        // Changing away from a confirmed bug: drop the bookmark it added,
+        // so a verdict you got wrong doesn't leave a "Confirmed bug" note.
+        self.clear_confirmed_bookmark(finding);
         let applied = if self.are_project_files_trusted {
             ""
         } else {
@@ -107,6 +110,39 @@ impl SrcWranglrApp {
             )),
             Err(error) => Status::Error(format!("Verdict saved, but the note wasn't: {error}")),
         };
+    }
+
+    /// Removes the auto-added "Confirmed bug"/"Confirmed prompt injection"
+    /// line from `finding`'s line bookmark; drops the bookmark if nothing
+    /// else is left, keeps your own notes otherwise.
+    fn clear_confirmed_bookmark(&mut self, finding: &Finding) {
+        let target = NoteTarget::Line {
+            file: finding.file.clone(),
+            line: finding.line,
+        };
+        let Some((existing, was_starred)) = self
+            .notebook
+            .notes()
+            .get(&target)
+            .map(|n| (n.text.clone(), n.is_starred))
+        else {
+            return;
+        };
+        let bug = format!("Confirmed bug: {}", finding.rule);
+        let injection = format!("Confirmed prompt injection: {}", finding.rule);
+        let kept: Vec<&str> = existing
+            .lines()
+            .filter(|line| !line.starts_with(&bug) && !line.starts_with(&injection))
+            .collect();
+        if kept.len() == existing.lines().count() {
+            return;
+        }
+        let text = kept.join("\n");
+        // An empty, unstarred note is removed by `set`.
+        let star = was_starred && !text.trim().is_empty();
+        if let Err(error) = self.notebook.set(&self.project, target, &text, star) {
+            self.status = Status::Error(format!("Verdict changed, but the note wasn't: {error}"));
+        }
     }
 
     /// Re-attaches your verdicts to the current findings.
@@ -242,6 +278,48 @@ mod tests {
         let note = app.notebook.notes().get(&line).expect("note");
         assert_eq!(note.text, "my earlier thought\nConfirmed bug: strcpy");
         assert!(note.is_starred);
+    }
+
+    #[test]
+    fn changing_a_wrong_confirmation_drops_its_bookmark_but_keeps_your_note() {
+        let mut app = app_with_strcpy();
+        let finding = app.findings.all()[0].clone();
+        let line = NoteTarget::Line {
+            file: "a.c".into(),
+            line: 2,
+        };
+        // Your own note on the line, then a confirmation on top of it.
+        app.notebook
+            .set(&app.project, line.clone(), "watch this one", true)
+            .expect("note");
+        app.apply_verdict(&finding, Some(TriageStatus::ConfirmedBug), String::new());
+        assert!(app
+            .notebook
+            .notes()
+            .get(&line)
+            .is_some_and(|n| n.text.contains("Confirmed bug: strcpy")));
+        // You got it wrong: mark it a false positive.
+        app.apply_verdict(&finding, Some(TriageStatus::FalsePositive), String::new());
+        let note = app.notebook.notes().get(&line);
+        assert_eq!(
+            note.map(|n| n.text.as_str()),
+            Some("watch this one"),
+            "your note stays"
+        );
+        assert!(
+            !note.unwrap().text.contains("Confirmed bug"),
+            "the bookmark is gone"
+        );
+
+        // Clearing the verdict with no note of your own removes the bookmark.
+        app.apply_verdict(&finding, Some(TriageStatus::ConfirmedBug), String::new());
+        app.notebook.set(&app.project, line.clone(), "", false).ok();
+        app.apply_verdict(&finding, Some(TriageStatus::ConfirmedBug), String::new());
+        app.apply_verdict(&finding, None, String::new());
+        assert!(
+            app.notebook.notes().get(&line).is_none(),
+            "bookmark removed when nothing else"
+        );
     }
 
     #[test]
