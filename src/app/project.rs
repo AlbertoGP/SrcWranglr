@@ -40,6 +40,15 @@ pub struct Project {
 
 impl Project {
     pub fn new(name: impl Into<String>, root: Option<PathBuf>, graph: CodeGraph) -> Self {
+        Self::from_shared(name, root, Arc::new(graph))
+    }
+
+    /// The project of a graph shared with others (the app's, for agents).
+    pub fn from_shared(
+        name: impl Into<String>,
+        root: Option<PathBuf>,
+        graph: Arc<CodeGraph>,
+    ) -> Self {
         let mut sorted_ids: Vec<SymbolId> = graph.symbols.keys().copied().collect();
         sorted_ids.sort_by(|a, b| {
             let name = |id| graph.symbols.get(id).map(|s| s.qualified_name.as_str());
@@ -69,7 +78,7 @@ impl Project {
         Self {
             name: name.into(),
             root,
-            graph: Arc::new(graph),
+            graph,
             sorted_ids,
             search_names,
             usage,

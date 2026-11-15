@@ -131,13 +131,7 @@ impl SrcWranglrApp {
                 trace::trace_variable(graph, file, *line, *column)
             }
             TraceStart::Forward { file, line, column } => {
-                let sinks: Vec<Sink> = self
-                    .findings
-                    .all()
-                    .iter()
-                    .filter(|f| is_about_a_call(f))
-                    .map(Sink::of)
-                    .collect();
+                let sinks = trace::sinks_of(self.findings.all());
                 trace::trace_forward(graph, &sinks, file, *line, *column)
             }
             TraceStart::Between {
@@ -184,17 +178,6 @@ impl SrcWranglrApp {
             .filter_map(|s| s.span.map(|span| (s.file.clone(), span)))
             .collect()
     }
-}
-
-/// Whether `finding` is about a call a value can reach, so a trace may end
-/// there: not a comment silencing a tool, nor lines a fix commit changed
-/// (which mark whole lines, and would match any call on them).
-fn is_about_a_call(finding: &crate::analysis::Finding) -> bool {
-    ![
-        crate::analysis::silenced::TOOL,
-        crate::history::findings::TOOL,
-    ]
-    .contains(&finding.tool.as_str())
 }
 
 #[cfg(test)]
@@ -270,16 +253,16 @@ mod tests {
             columns: None,
             symbol: None,
         };
-        assert!(super::is_about_a_call(&finding("semgrep")));
-        assert!(super::is_about_a_call(&finding(
-            crate::analysis::risky::TOOL
-        )));
-        assert!(!super::is_about_a_call(&finding(
-            crate::history::findings::TOOL
-        )));
-        assert!(!super::is_about_a_call(&finding(
-            crate::analysis::silenced::TOOL
-        )));
+        let tools = [
+            "semgrep",
+            crate::analysis::risky::TOOL,
+            crate::history::findings::TOOL,
+            crate::analysis::silenced::TOOL,
+        ];
+        let findings: Vec<_> = tools.iter().map(|tool| finding(tool)).collect();
+        let sinks = trace::sinks_of(&findings);
+        // Fix commits and silencing comments mark lines, not calls.
+        assert_eq!(sinks.len(), 2);
     }
 
     fn argv_source() -> TraceSource {

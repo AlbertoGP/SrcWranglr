@@ -152,6 +152,23 @@ impl Sink {
     }
 }
 
+/// The calls of `findings` a value traced forward may reach: those about
+/// a call there, not comments silencing a tool, nor lines a fix commit
+/// changed (which mark whole lines, and would match any call on them).
+pub fn sinks_of(findings: &[Finding]) -> Vec<Sink> {
+    findings
+        .iter()
+        .filter(|f| {
+            ![
+                crate::analysis::silenced::TOOL,
+                crate::history::findings::TOOL,
+            ]
+            .contains(&f.tool.as_str())
+        })
+        .map(Sink::of)
+        .collect()
+}
+
 /// One place the value passes through.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {

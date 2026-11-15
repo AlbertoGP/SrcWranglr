@@ -1,9 +1,9 @@
 //! Your verdicts on findings: recording them (and saving), and keeping
 //! them attached to the findings as those change.
 
-use super::findings::line_text;
+use super::findings::{line_text, verdict_label};
 use super::{SrcWranglrApp, Status};
-use crate::analysis::Finding;
+use crate::analysis::{injection, Finding};
 use crate::notes::triage::{self, TriageEntry, TriageStatus};
 use crate::notes::NoteTarget;
 
@@ -68,7 +68,7 @@ impl SrcWranglrApp {
             Some(status) => format!(
                 "Marked {} as {}.{applied}",
                 finding.rule,
-                status.label().to_lowercase()
+                verdict_label(&finding.rule, status).to_lowercase()
             ),
             None => format!("Cleared the verdict on {}.", finding.rule),
         });
@@ -81,9 +81,13 @@ impl SrcWranglrApp {
             file: finding.file.clone(),
             line: finding.line,
         };
+        let confirmed = match finding.rule == injection::RULE {
+            true => "Confirmed prompt injection",
+            false => "Confirmed bug",
+        };
         let bug = match note {
-            "" => format!("Confirmed bug: {}", finding.rule),
-            note => format!("Confirmed bug: {}: {note}", finding.rule),
+            "" => format!("{confirmed}: {}", finding.rule),
+            note => format!("{confirmed}: {}: {note}", finding.rule),
         };
         let existing = self
             .notebook
@@ -98,7 +102,7 @@ impl SrcWranglrApp {
         };
         self.status = match self.notebook.set(&self.project, target, &text, true) {
             Ok(()) => Status::Info(format!(
-                "Confirmed bug saved, and bookmarked in Notes ({}:{}).",
+                "{confirmed} saved, and bookmarked in Notes ({}:{}).",
                 finding.file, finding.line
             )),
             Err(error) => Status::Error(format!("Verdict saved, but the note wasn't: {error}")),

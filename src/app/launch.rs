@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::graph::ViewMode;
 
 pub const USAGE: &str = "usage: srcwranglr [PROJECT_DIR] [--symbol QUALIFIED_NAME] \
-                         [--view trail|calls] [--triage]\n       srcwranglr --version";
+                         [--view trail|calls] [--triage]\n       srcwranglr --mcp [PROJECT_DIR]   (serve it to an agent)\n       srcwranglr --version";
 
 /// The window and Dock icon (the macOS bundle also carries it as .icns).
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icon-256.png");

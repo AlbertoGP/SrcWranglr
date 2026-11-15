@@ -12,6 +12,7 @@ use tree_sitter::{Node, Parser};
 
 use super::comment_marks::{self, FileMarks};
 use super::complexity;
+use super::instruction_comments::{self, FileInstructions};
 use super::signature;
 use super::strings::{self, FileStrings};
 use super::syntax::{
@@ -98,6 +99,8 @@ pub struct FileFacts {
     pub strings: FileStrings,
     /// Comments silencing analyzers, and TODO-style tags.
     pub comment_marks: FileMarks,
+    /// Comments that read like instructions to an AI agent.
+    pub instructions: FileInstructions,
 }
 
 pub struct Extractor {
@@ -107,6 +110,8 @@ pub struct Extractor {
     /// How many more tags and silencing comments the project may keep.
     tags_left: usize,
     silencers_left: usize,
+    /// How many more comments reading like AI instructions it may keep.
+    instructions_left: usize,
 }
 
 impl Extractor {
@@ -126,6 +131,7 @@ impl Extractor {
             strings_left: budget,
             tags_left: comment_marks::MAX_MARKS_TOTAL,
             silencers_left: comment_marks::MAX_MARKS_TOTAL,
+            instructions_left: instruction_comments::MAX_TOTAL,
         })
     }
 
@@ -150,9 +156,17 @@ impl Extractor {
         let (tags, silencers) = comment_marks.counts();
         self.tags_left = self.tags_left.saturating_sub(tags);
         self.silencers_left = self.silencers_left.saturating_sub(silencers);
+        let limit = self
+            .instructions_left
+            .min(instruction_comments::MAX_PER_FILE);
+        let instructions = instruction_comments::collect(tree.root_node(), source, limit);
+        self.instructions_left = self
+            .instructions_left
+            .saturating_sub(instructions.found.len());
         Some(FileFacts {
             strings,
             comment_marks,
+            instructions,
             ..walker.facts
         })
     }

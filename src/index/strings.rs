@@ -31,6 +31,8 @@ pub struct StringFact {
     pub text: String,
     /// Where it starts; to the end of that line if it goes on.
     pub span: Span,
+    /// Where it ends: 1-based line, and the byte column just past it.
+    pub end: (u32, u32),
 }
 
 /// A file's strings, and whether there were more than were kept.
@@ -95,7 +97,14 @@ fn literal_fact(node: Node, src: &str) -> Option<StringFact> {
     };
     let start = node.start_position();
     let first_line = node_text(node, src).lines().next().unwrap_or("");
-    fact_at(text, start.row, start.column, first_line.len())
+    let end = node.end_position();
+    fact_at(
+        text,
+        start.row,
+        start.column,
+        first_line.len(),
+        (end.row, end.column),
+    )
 }
 
 /// Whether the literal at `node` is a string the code uses: not an
@@ -120,10 +129,12 @@ fn macro_facts(node: Node, src: &str) -> Vec<StringFact> {
         .into_iter()
         .filter_map(|group| {
             let first = group.first()?.clone();
+            let last = group.last()?.end;
             let parts: Vec<&str> = group.iter().filter_map(|r| body.get(r.clone())).collect();
             let (row, column) = position_in(body, first.start, origin.row, origin.column);
+            let end = position_in(body, last, origin.row, origin.column);
             let first_line = body.get(first)?.lines().next().unwrap_or("");
-            fact_at(joined_cut_short(&parts), row, column, first_line.len())
+            fact_at(joined_cut_short(&parts), row, column, first_line.len(), end)
         })
         .collect()
 }
@@ -139,15 +150,25 @@ fn position_in(body: &str, offset: usize, row: usize, column: usize) -> (usize, 
 }
 
 /// A string `text` starting at `row`, `column` (0-based), whose first line
-/// is `width` bytes.
-fn fact_at(text: String, row: usize, column: usize, width: usize) -> Option<StringFact> {
+/// is `width` bytes, and ending at `end` (0-based row, column).
+fn fact_at(
+    text: String,
+    row: usize,
+    column: usize,
+    width: usize,
+    end: (usize, usize),
+) -> Option<StringFact> {
     let start = u32::try_from(column).ok()?;
     let span = Span {
         line: u32::try_from(row.checked_add(1)?).ok()?,
         start,
         end: start.checked_add(u32::try_from(width).ok()?)?,
     };
-    Some(StringFact { text, span })
+    let end = (
+        u32::try_from(end.0.checked_add(1)?).ok()?,
+        u32::try_from(end.1).ok()?,
+    );
+    Some(StringFact { text, span, end })
 }
 
 /// `parts` joined by spaces, cut short (with `…`) past `MAX_STRING_CHARS`
@@ -208,6 +229,7 @@ fn placed(facts: Vec<StringFact>, functions: &[&FunctionMetrics]) -> Vec<StringL
         .map(|(fact, function)| StringLiteral {
             text: fact.text,
             span: fact.span,
+            end: fact.end,
             function,
         })
         .collect()

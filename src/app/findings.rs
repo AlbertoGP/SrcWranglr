@@ -5,13 +5,14 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::analysis::dangerous::DangerousList;
+use crate::analysis::injection;
 use crate::analysis::risky::{self, risky_calls};
 use crate::analysis::silenced::{self, silencing_comments};
 use crate::analysis::{Finding, Severity};
 use crate::model::CodeGraph;
 use crate::notes::triage::{FindingKey, Triage, TriageStatus};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Findings {
     /// Sorted by severity, then file and line.
     all: Vec<Finding>,
@@ -159,11 +160,25 @@ impl Findings {
 }
 
 /// The findings SrcWranglr makes itself: risky calls (with `list`'s
-/// functions) and comments silencing analyzers.
+/// functions), comments silencing analyzers, and possible prompt
+/// injections.
 fn own_findings(graph: &CodeGraph, list: &DangerousList) -> Vec<Finding> {
     let mut found = risky_calls(graph, list);
     found.extend(silencing_comments(graph));
+    found.extend(injection::findings(graph));
     found
+}
+
+/// What a verdict is called on a finding of `rule`: a possible prompt
+/// injection is benign or confirmed (and then withheld from agents), not
+/// a bug.
+pub fn verdict_label(rule: &str, status: TriageStatus) -> &'static str {
+    match (rule == injection::RULE, status) {
+        (true, TriageStatus::Reviewed) => "Reviewed",
+        (true, TriageStatus::FalsePositive) => "Benign",
+        (true, TriageStatus::ConfirmedBug) => "Confirmed injection (withheld from agents)",
+        (false, status) => status.label(),
+    }
 }
 
 /// Whether SrcWranglr made `finding` itself, rather than a tool it ran.

@@ -28,11 +28,12 @@ pub enum Pane {
     Matching,
     Todos,
     Trace,
+    Agent,
 }
 
 impl Pane {
     /// In the order the toggles are shown, left to right.
-    pub const ALL: [Pane; 9] = [
+    pub const ALL: [Pane; 10] = [
         Pane::Symbols,
         Pane::Source,
         Pane::Notes,
@@ -42,6 +43,7 @@ impl Pane {
         Pane::Matching,
         Pane::Todos,
         Pane::Trace,
+        Pane::Agent,
     ];
 
     /// Its toggle's label.
@@ -56,6 +58,7 @@ impl Pane {
             Pane::Matching => "Matching",
             Pane::Todos => "TODO",
             Pane::Trace => "Trace",
+            Pane::Agent => "Agent",
         }
     }
 
@@ -71,6 +74,7 @@ impl Pane {
             Pane::Matching => "Semantic Code Matching",
             Pane::Todos => "TODO List",
             Pane::Trace => "Trace Pane",
+            Pane::Agent => "Agent Activity (MCP)",
         }
     }
 }
@@ -171,6 +175,7 @@ impl SrcWranglrApp {
             Pane::Matching => self.matching_panel.is_open(),
             Pane::Todos => self.todo_panel.is_open(),
             Pane::Trace => self.trace_panel.is_open(),
+            Pane::Agent => self.agent_panel.is_open(),
         }
     }
 
@@ -187,6 +192,7 @@ impl SrcWranglrApp {
             Pane::Matching => self.matching_panel.set_open(is_shown),
             Pane::Todos => self.todo_panel.set_open(is_shown),
             Pane::Trace => self.trace_panel.set_open(is_shown),
+            Pane::Agent => self.agent_panel.set_open(is_shown),
         }
     }
 

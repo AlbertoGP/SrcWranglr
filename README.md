@@ -82,6 +82,12 @@ The audited code can't silence these tools: SrcWranglr ignores its `// nosemgrep
 
 Install them with `brew install semgrep cppcheck flawfinder`, or `pipx install semgrep flawfinder` and your system's `cppcheck` package.
 
+### Work with an AI agent
+
+- **MCP server:** opencode, Claude Code and other MCP clients ask SrcWranglr for symbols, call graphs, cross references, findings and strings instead of grepping and reading whole files (`srcwranglr --mcp`). With the app open, the agent shares its index, and the **Agent** pane shows each call as it comes; notes the agent adds appear in Notes.
+- **AAVR assessments:** start a run of AAVR vulnerability-research skills in opencode from the Agent pane, and follow it there: phases, candidates, attack surfaces, fuzz targets and crashes, each a click from its code. The agent gets tools for each phase: input paths, value traces, fuzz-target ranking, harness drafts with Makefiles, semgrep rule drafts, journal entries and SARIF import.
+- **Prompt-injection tripwire:** comments and strings that read like instructions to an AI (or hide text in invisible characters) are findings. Confirm one and SrcWranglr withholds it from agents; unreviewed ones are marked wherever the agent sees them.
+
 ### Keep your investigation organized
 
 - **Notes, bookmarks, and TODOs:** attach context to symbols and source lines, and browse TODO-style comments already in the code.
@@ -143,6 +149,7 @@ Packaging support for Linux and Windows is present; those platforms remain untes
 
 ```text
 srcwranglr [PROJECT_DIR] [--symbol QUALIFIED_NAME] [--view trail|calls] [--triage]
+srcwranglr --mcp [PROJECT_DIR]
 srcwranglr --version
 ```
 
@@ -152,7 +159,7 @@ For example, open **LevelDB** at a function in the call hierarchy:
 srcwranglr ~/code/leveldb --symbol leveldb::DBImpl::Write --view calls
 ```
 
-Use `--triage` to open the project survey after indexing. See the [command-line reference](docs/guide.md#command-line) for all options.
+Use `--triage` to open the project survey after indexing, and `--mcp` to serve a project to an AI agent ([setup](docs/guide.md#agents-mcp)), such as `opencode mcp add --global srcwranglr -- /Applications/SrcWranglr.app/Contents/MacOS/srcwranglr --mcp`. See the [command-line reference](docs/guide.md#command-line) for all options.
 
 ## Development
 
@@ -185,7 +192,7 @@ Planned additions include:
 - Following values through pointer aliases.
 - Richer semantic indexing and search beyond syntax shapes and call behaviors.
 - Collecting useful seed corpora for fuzz targets.
-- Exploring lightweight language-model assistance for understanding large codebases: explaining a function, triaging a finding, and drafting a rule from a description.
+- More tools for agents (traces, source-to-sink paths, git history, fuzz targets and harnesses), and MCP prompts for explaining a function, triaging a finding, and drafting a rule from a description.
 
 
 ## AI Policy

@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use super::comment_marks;
 use super::extract::{Decl, FileFacts, Lookup, Reference};
+use super::instruction_comments;
 use super::strings;
 use crate::model::{
     CodeGraph, Edge, EdgeKind, ExternalCall, FunctionMetrics, Occurrence, OccurrenceRole, Symbol,
@@ -87,6 +88,8 @@ pub fn build_graph(mut files: Vec<SourceFile>) -> CodeGraph {
     let (strings, strings_cut_short) = strings::by_file(&mut files, &functions);
     let (tags_cut_short, silencers_cut_short) = comment_marks::files_cut_short(&files);
     let comment_marks = comment_marks::by_file(&mut files, &functions);
+    let ai_instructions_cut_short = instruction_comments::files_cut_short(&files);
+    let ai_instructions = instruction_comments::by_file(&mut files, &functions);
     let file_contents = files.into_iter().map(|f| (f.path, f.contents)).collect();
     CodeGraph {
         symbols,
@@ -101,6 +104,8 @@ pub fn build_graph(mut files: Vec<SourceFile>) -> CodeGraph {
         comment_marks,
         tags_cut_short,
         silencers_cut_short,
+        ai_instructions,
+        ai_instructions_cut_short,
     }
 }
 

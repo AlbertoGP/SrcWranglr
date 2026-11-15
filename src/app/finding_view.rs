@@ -3,6 +3,7 @@
 
 use egui::{Id, RichText};
 
+use super::findings::verdict_label;
 use super::visible::{visible, visible_lines};
 use crate::analysis::{risky, silenced, Finding};
 use crate::model::SymbolId;
@@ -125,7 +126,8 @@ impl FindingView {
         ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut self.verdict, None, "Untriaged");
             for status in TriageStatus::ALL {
-                ui.radio_value(&mut self.verdict, Some(status), status.label());
+                let label = verdict_label(&self.finding.rule, status);
+                ui.radio_value(&mut self.verdict, Some(status), label);
             }
         });
         ui.add(
@@ -325,6 +327,40 @@ mod tests {
             Some(FindingViewAction::Triage(
                 Some(TriageStatus::ConfirmedBug),
                 "len from packet".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_prompt_injection_is_judged_benign_or_confirmed_and_withheld() {
+        let injection = Finding {
+            rule: crate::analysis::injection::RULE.into(),
+            ..finding()
+        };
+        let view = FindingView::new(injection, None, None, None);
+        let mut harness = Harness::new_ui_state(
+            |ui, state: &mut State| {
+                let ctx = ui.ctx().clone();
+                if let Some(action) = state.view.show(&ctx) {
+                    state.action = Some(action);
+                }
+            },
+            State { view, action: None },
+        );
+        harness.run();
+        harness.get_by_label("Benign");
+        assert!(harness.query_by_label("Confirmed bug").is_none());
+        harness
+            .get_by_label("Confirmed injection (withheld from agents)")
+            .click();
+        harness.run();
+        harness.get_by_label("Save Verdict").click();
+        harness.run();
+        assert_eq!(
+            harness.state().action,
+            Some(FindingViewAction::Triage(
+                Some(TriageStatus::ConfirmedBug),
+                String::new()
             ))
         );
     }

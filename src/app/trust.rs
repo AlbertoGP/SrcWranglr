@@ -53,7 +53,14 @@ fn is_trusted_in(file: &Path, root: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Held while the list is read and written again, so two trusts at once
+/// (the app's, an agent bridge's, tests') don't lose one.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn trust_in(file: &Path, root: &Path) -> Result<(), String> {
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if is_trusted_in(file, root) {
         return Ok(());
     }

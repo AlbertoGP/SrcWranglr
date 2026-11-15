@@ -8,6 +8,7 @@ mod comment_marks;
 mod complexity;
 mod discover;
 mod extract;
+mod instruction_comments;
 pub mod job;
 mod macro_strings;
 mod placement;

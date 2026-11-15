@@ -63,7 +63,7 @@ impl SrcWranglrApp {
     }
 
     /// Reads and parses the report at `path` in the background.
-    fn read_sarif(&mut self, path: PathBuf, ctx: &egui::Context) {
+    pub(super) fn read_sarif(&mut self, path: PathBuf, ctx: &egui::Context) {
         let Some(root) = self.project.root.clone() else {
             self.sarif_import = None;
             return;
@@ -136,16 +136,18 @@ impl SrcWranglrApp {
 
 fn read_report(path: &Path, root: &Path, graph: &CodeGraph) -> Result<Imported, String> {
     let shown = path.display();
-    let size = std::fs::metadata(path)
-        .map_err(|e| format!("Could not read {shown}: {e}"))?
-        .len();
-    if size > MAX_SARIF_BYTES {
-        return Err(format!(
-            "{shown} is larger than {} MB; SrcWranglr doesn't read reports that big.",
-            MAX_SARIF_BYTES / (1024 * 1024)
-        ));
-    }
-    let json = std::fs::read_to_string(path).map_err(|e| format!("Could not read {shown}: {e}"))?;
+    // The agent has a shell and may swap the file for a symlink or FIFO
+    // between the check and here, so read it the hostile-tree way.
+    let json = match crate::safe_fs::read_regular_file(path, MAX_SARIF_BYTES) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Err(format!("{shown} is no longer there.")),
+        Err(e) => {
+            return Err(format!(
+                "Could not read {shown} as a report ({e}); it must be a regular file no larger than {} MB.",
+                MAX_SARIF_BYTES / (1024 * 1024)
+            ))
+        }
+    };
     let imported = sarif::parse(&json, root, |file| {
         graph.file_contents.get(file).map(String::as_str)
     })

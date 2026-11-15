@@ -2,6 +2,7 @@
 //! severe first, filterable by severity, text, and whether outside input
 //! reaches them; click one to go there.
 
+use super::findings::verdict_label;
 use super::visible::{visible, visible_lines};
 use crate::history::findings as history_findings;
 use egui::RichText;
@@ -192,7 +193,8 @@ fn finding_row(
                 });
         }
         if let Some(verdict) = verdict {
-            ui.label(RichText::new(format!("[{}]", verdict.label().to_lowercase())).strong());
+            let label = verdict_label(&finding.rule, verdict).to_lowercase();
+            ui.label(RichText::new(format!("[{label}]")).strong());
         }
         let severity = RichText::new(finding.severity.label())
             .color(severity_text_color(finding.severity, ui.visuals()))

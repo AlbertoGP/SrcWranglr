@@ -18,7 +18,7 @@ use serde::Deserialize;
 use super::{Finding, Severity};
 
 /// Reports larger than this aren't read.
-pub const MAX_SARIF_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_SARIF_BYTES: usize = 64 * 1024 * 1024;
 /// Results kept from one report, at most, and on one line of a file.
 pub const MAX_RESULTS: usize = 200_000;
 pub const MAX_RESULTS_PER_LINE: usize = 50;

@@ -208,6 +208,7 @@ impl SrcWranglrApp {
         self.todo_panel
             .set_source_tags(super::source_tags::source_tags(&self.project.graph));
         self.start_history(ctx);
+        self.serve_agents(ctx);
         // A new project starts with a fresh selection, in the same view mode.
         self.graph_view = GraphView::with_mode(self.graph_view.mode());
         self.code_panel = CodePanel::default();

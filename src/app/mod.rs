@@ -1,21 +1,27 @@
 //! Top-level window: menu, symbol list, graph, code panel, status bar, and
 //! the lifecycle of background indexing jobs.
 
+mod aavr_run;
+mod aavr_view;
 mod about;
+mod agent_actions;
+mod agent_bridge;
+mod agent_panel;
+mod assessment;
 mod background;
 mod bundle;
 mod bundle_actions;
 mod code_panel;
 mod code_panel_actions;
 mod dangerous_editor;
-mod dangerous_lists;
+pub(crate) mod dangerous_lists;
 mod dialogs;
 mod docs;
 mod docs_actions;
 mod docs_view;
 mod editor;
 mod finding_view;
-mod findings;
+pub(crate) mod findings;
 mod findings_actions;
 mod findings_panel;
 pub(crate) mod fonts;
@@ -41,9 +47,9 @@ mod notebook;
 mod notes_actions;
 mod notes_panel;
 mod opening;
-mod palette;
+pub(crate) mod palette;
 mod pane_bar;
-mod project;
+pub(crate) mod project;
 mod range;
 mod readme;
 mod readme_view;
@@ -79,10 +85,10 @@ mod tool_job;
 mod trace_actions;
 mod trace_panel;
 mod triage_actions;
-mod trust;
+pub(crate) mod trust;
 pub(crate) mod visible;
 mod welcome;
-mod xrefs;
+pub(crate) mod xrefs;
 mod xrefs_actions;
 mod xrefs_view;
 
@@ -214,6 +220,8 @@ pub struct SrcWranglrApp {
     /// A session file's project, session and path, waiting for you to
     /// agree to index a folder you haven't opened before.
     session_to_confirm: Option<(PathBuf, session::Session, PathBuf)>,
+    /// opencode and the untrusted folder a Start is waiting to confirm.
+    start_to_confirm: Option<(PathBuf, PathBuf)>,
     /// The session file dialog, while it is open.
     session_dialog: Option<session_actions::SessionDialog>,
     /// The session file last opened or saved, and the project folder it
@@ -228,6 +236,9 @@ pub struct SrcWranglrApp {
     /// Why the TODO file couldn't be read; the list is read-only then.
     todos_error: Option<String>,
     todo_panel: todo_panel::TodoPanel,
+    /// The open project served to agents, and what they asked.
+    agent: agent_bridge::AgentBridge,
+    agent_panel: agent_panel::AgentPanel,
     /// The open project's journal, and why its file couldn't be read (it
     /// is read-only then).
     journal: crate::notes::journal::Journal,
@@ -277,6 +288,7 @@ impl SrcWranglrApp {
             sessions: session::Sessions::load(storage),
             pending_session: None,
             session_to_confirm: None,
+            start_to_confirm: None,
             session_dialog: None,
             session_file: None,
             bundle_dialog: None,
@@ -284,6 +296,8 @@ impl SrcWranglrApp {
             todos: Default::default(),
             todos_error: None,
             todo_panel: todo_panel::TodoPanel::default(),
+            agent: agent_bridge::AgentBridge::default(),
+            agent_panel: agent_panel::AgentPanel::default(),
             journal: Default::default(),
             journal_error: None,
             tool_jobs: Vec::new(),
@@ -408,12 +422,14 @@ impl eframe::App for SrcWranglrApp {
         self.poll_tool_jobs();
         self.poll_history();
         self.poll_docs(&ctx);
+        self.poll_agent(&ctx);
         // Global shortcuts pause while the palette or a dialog is open.
         let is_dialog_open = self.note_editor.is_some()
             || self.finding_view.is_some()
             || self.dangerous_editor.is_some()
             || self.settings_view.is_some()
             || self.session_to_confirm.is_some()
+            || self.start_to_confirm.is_some()
             || self.bundle_preview.is_some();
         if !self.palette.is_open() && !is_dialog_open {
             self.handle_global_shortcuts(&ctx);
@@ -441,6 +457,7 @@ impl eframe::App for SrcWranglrApp {
         self.show_settings_view(&ctx);
         about::show(&ctx, &mut self.is_about_open);
         self.show_session_confirm(&ctx);
+        self.show_start_confirm(&ctx);
         self.show_bundle_preview(&ctx);
         let survey = self
             .survey_view
@@ -486,6 +503,7 @@ impl SrcWranglrApp {
         self.show_symbol_list(ui);
         self.show_notes_panel(ui);
         self.show_todo_panel(ui);
+        self.show_agent_panel(ui);
         let finding = self
             .findings_panel
             .show(

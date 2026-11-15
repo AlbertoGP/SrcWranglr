@@ -108,12 +108,17 @@ impl EditorEnv {
             visual: var("VISUAL"),
             editor: var("EDITOR"),
             has_vscode: search.find(VSCODE).is_some(),
-            os: if cfg!(target_os = "macos") {
-                Os::MacOs
-            } else {
-                Os::Other
-            },
+            os: this_os(),
         }
+    }
+}
+
+/// The system SrcWranglr runs on, as far as opening programs goes.
+pub fn this_os() -> Os {
+    if cfg!(target_os = "macos") {
+        Os::MacOs
+    } else {
+        Os::Other
     }
 }
 
@@ -162,6 +167,13 @@ pub fn open_in_editor(
     search: &SearchPath,
 ) -> Result<String, String> {
     let launch = editor_launch(&EditorEnv::from_process(setting, search), position)?;
+    spawn_detached(&launch, search)?;
+    Ok(launch.program)
+}
+
+/// Starts `launch` (found with `search`, run with it as its `PATH`)
+/// without waiting for it, or says why it couldn't.
+pub fn spawn_detached(launch: &Launch, search: &SearchPath) -> Result<(), String> {
     let program = resolve(&launch.program, search)?;
     let mut child = std::process::Command::new(&program)
         .args(&launch.args)
@@ -178,7 +190,7 @@ pub fn open_in_editor(
         Ok(_) => {}
         Err(e) => eprintln!("waiting for {program} failed: {e}"),
     });
-    Ok(launch.program)
+    Ok(())
 }
 
 /// Where `program` is: found with `search`, else left to the system by
@@ -303,7 +315,7 @@ fn with_line_args(
 /// terminal, where control characters (Ctrl-C, Esc, paste markers) act
 /// before the shell parses anything, so a command containing any is
 /// refused rather than quoted.
-fn in_new_terminal(launch: Launch, os: Os) -> Result<Launch, String> {
+pub fn in_new_terminal(launch: Launch, os: Os) -> Result<Launch, String> {
     match os {
         Os::MacOs => {
             let words = || std::iter::once(&launch.program).chain(&launch.args);

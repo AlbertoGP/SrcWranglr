@@ -126,8 +126,39 @@ pub struct StringLiteral {
     pub text: String,
     /// Where it starts; to the end of that line if it goes on.
     pub span: Span,
+    /// Where it ends: 1-based line, and the byte column just past it.
+    pub end: (u32, u32),
     /// The function it is in; `None` at file scope.
     pub function: Option<SymbolId>,
+}
+
+/// A comment or string literal that reads like instructions to an AI
+/// agent: a possible prompt injection aimed at one auditing the code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiInstruction {
+    /// Where the comment or string starts.
+    pub span: Span,
+    /// Where it ends: 1-based line, and the byte column just past it. A
+    /// block comment may run on over lines.
+    pub end: (u32, u32),
+    pub cue: Cue,
+    /// The function it is in; `None` at file scope.
+    pub function: Option<SymbolId>,
+}
+
+/// What makes text read like instructions to an AI agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cue {
+    /// Words telling an AI what to do, or addressed to one, as found:
+    /// `ignore all previous instructions`.
+    Phrase(String),
+    /// A chat template's marker, such as `<|im_start|>`.
+    ChatToken(&'static str),
+    /// Unicode tag characters or variation selectors, which show as
+    /// nothing yet can spell out text a model reads.
+    InvisibleText,
+    /// Zero-width or text-direction characters.
+    HiddenCharacters,
 }
 
 /// A comment worth a look: one telling an analyzer not to report, or a
@@ -291,6 +322,12 @@ pub struct CodeGraph {
     pub tags_cut_short: Vec<String>,
     /// Files with more comments silencing analyzers than were kept.
     pub silencers_cut_short: Vec<String>,
+    /// Comments reading like instructions to an AI agent, per file (files
+    /// with any), in file order. String literals are judged from
+    /// `strings`.
+    pub ai_instructions: HashMap<String, Vec<AiInstruction>>,
+    /// Files with more of those comments than were kept.
+    pub ai_instructions_cut_short: Vec<String>,
 }
 
 impl CodeGraph {

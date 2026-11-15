@@ -6,6 +6,7 @@ mod docs;
 mod graph;
 mod history;
 mod index;
+mod mcp;
 mod model;
 mod notes;
 mod process;
@@ -33,6 +34,11 @@ fn main() -> eframe::Result<()> {
     {
         args.next();
         std::process::exit(history::worker::worker_main(args));
+    }
+    // An agent's client runs it this way to ask about a project.
+    if args.peek().is_some_and(|arg| arg == mcp::MCP_ARG) {
+        args.next();
+        std::process::exit(mcp::mcp_main(args));
     }
     let options = match parse_args(args) {
         Ok(options) => options,

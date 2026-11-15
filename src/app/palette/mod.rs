@@ -9,7 +9,7 @@ use egui::{Align2, Id, Key, KeyboardShortcut, Modifiers, RichText};
 
 use super::project::{LibraryFunction, Project};
 use super::visible::visible;
-use search::{search, Candidates};
+pub(crate) use search::{search, Candidates};
 pub use search::{Command, Entry};
 pub use search::{COMMAND_PREFIX, LIBRARY_PREFIX, NOTE_PREFIX};
 
