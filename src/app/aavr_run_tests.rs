@@ -83,7 +83,8 @@ fn surfaces_harness_crashes_and_report_are_read() {
     );
     write(dir.path(), "reports/aavr-report.md", "# Report\n");
     let run = read(dir.path()).expect("run");
-    assert_eq!(run.surfaces[0].entry_point, "handle_packet");
+    assert_eq!(run.surfaces[0].detail, "handle_packet");
+    assert_eq!(run.surfaces[0].title, "SURFACE-001");
     assert_eq!(
         run.harness.as_ref().map(|h| h.target.as_str()),
         Some("parse_header")
@@ -92,6 +93,27 @@ fn surfaces_harness_crashes_and_report_are_read() {
     assert_eq!(run.crashes[0].is_reproducible, Some(true));
     assert_eq!(run.crashes[0].place, Some(("net/parse.c".into(), 5)));
     assert_eq!(run.report.as_deref(), Some(".aavr/reports/aavr-report.md"));
+}
+
+#[test]
+fn surfaces_read_with_the_models_own_keys_and_find_a_place() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(
+        dir.path(),
+        "surfaces/map.json",
+        r#"{"surfaces": [{"name": "miniupnpd HTTP/SOAP",
+            "entry": ["recv/SSL_read upnphttp.c:101", "ProcessHttpQuery upnphttp.c:896"],
+            "reaches": ["upnpsoap.c handlers"], "notes": "root daemon"}]}"#,
+    );
+    let run = read(dir.path()).expect("run");
+    assert_eq!(run.surfaces.len(), 1);
+    assert_eq!(run.surfaces[0].title, "miniupnpd HTTP/SOAP");
+    assert!(
+        run.surfaces[0].detail.contains("upnphttp.c:101"),
+        "{:?}",
+        run.surfaces[0]
+    );
+    assert_eq!(run.surfaces[0].place, Some(("upnphttp.c".into(), 101)));
 }
 
 #[test]

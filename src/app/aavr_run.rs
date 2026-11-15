@@ -108,11 +108,13 @@ pub struct Candidate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
-    pub id: String,
-    pub origin: String,
-    /// A function, usually.
-    pub entry_point: String,
+    /// What it is (the model's name or id for it).
+    pub title: String,
+    /// Where it enters: a function or a `file:line`, when given.
+    pub detail: String,
     pub priority: String,
+    /// A place to jump to, pulled from wherever one is written.
+    pub place: Option<Spot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,20 +319,45 @@ fn findings(dir: &Path, budget: &mut usize, problems: &mut Vec<String>) -> Vec<C
         .collect()
 }
 
+/// The surfaces, however the model shaped them: an array, or under
+/// `surfaces` or `prioritized_candidates`.
 fn surfaces_of(map: &Value) -> Vec<Surface> {
     let list = map
         .as_array()
-        .or_else(|| map.get("surfaces").and_then(Value::as_array));
+        .or_else(|| map.get("surfaces").and_then(Value::as_array))
+        .or_else(|| map.get("prioritized_candidates").and_then(Value::as_array));
     list.into_iter()
         .flatten()
         .take(MAX_ITEMS)
-        .map(|s| Surface {
-            id: field(s, "id").unwrap_or_default(),
-            origin: field(s, "origin").unwrap_or_default(),
-            entry_point: field(s, "entry_point").unwrap_or_default(),
-            priority: field(s, "priority").unwrap_or_default(),
-        })
+        .filter_map(surface_of)
         .collect()
+}
+
+/// One surface, trying the field names models tend to use. A finding or
+/// place is read from wherever it is written, so a model's own shape still
+/// shows something.
+fn surface_of(s: &Value) -> Option<Surface> {
+    let title = field_any(s, &["id", "name", "surface", "title", "origin"])?;
+    let detail =
+        field_any(s, &["entry_point", "entry", "parser", "reaches", "origin"]).unwrap_or_default();
+    let priority = field_any(s, &["priority", "trust", "severity"]).unwrap_or_default();
+    let place = [
+        "entry",
+        "entry_point",
+        "parser",
+        "reaches",
+        "evidence",
+        "sink",
+        "notes",
+    ]
+    .iter()
+    .find_map(|k| s.get(*k).and_then(spot_in));
+    Some(Surface {
+        title,
+        detail,
+        priority,
+        place,
+    })
 }
 
 fn harness_of(pick: &Value) -> Option<HarnessPick> {
@@ -415,11 +442,25 @@ fn field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(text_of)
 }
 
+/// The first of `keys` present as non-empty text.
+fn field_any(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|k| field(value, k))
+        .filter(|t| !t.trim().is_empty())
+}
+
+/// `value` as text: a string, number or bool, or an array of them joined
+/// (so a model's list of entry points still reads). Objects are left out
+/// rather than dumped.
 fn text_of(value: &Value) -> Option<String> {
     match value {
         Value::String(s) => Some(cut(s)),
         Value::Number(n) => Some(n.to_string()),
         Value::Bool(b) => Some(b.to_string()),
+        Value::Array(items) => {
+            let parts: Vec<String> = items.iter().take(4).filter_map(text_of).collect();
+            (!parts.is_empty()).then(|| cut(&parts.join("; ")))
+        }
         _ => None,
     }
 }

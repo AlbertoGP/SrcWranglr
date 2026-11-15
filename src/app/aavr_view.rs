@@ -272,14 +272,16 @@ fn surfaces(ui: &mut egui::Ui, run: &AavrRun) -> Option<AavrAction> {
     }
     ui.strong(format!("Attack surfaces ({})", run.surfaces.len()));
     run.surfaces.iter().find_map(|s| {
-        let text = format!(
-            "{}  {} → {}  ({})",
-            visible(&s.id),
-            visible(&s.origin),
-            visible(&s.entry_point),
-            visible(&s.priority)
-        );
-        symbol_row(ui, &text, &s.entry_point)
+        let detail = match s.detail.is_empty() {
+            true => String::new(),
+            false => format!("  → {}", visible(&s.detail)),
+        };
+        let priority = match s.priority.is_empty() {
+            true => String::new(),
+            false => format!("  ({})", visible(&s.priority)),
+        };
+        let text = format!("{}{detail}{priority}", visible(&s.title));
+        place_row(ui, &text, s.place.as_ref())
     })
 }
 
