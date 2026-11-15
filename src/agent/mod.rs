@@ -10,4 +10,6 @@
 #![allow(dead_code)]
 
 pub mod llm;
+pub mod prompt;
 pub mod session;
+pub mod tools;
