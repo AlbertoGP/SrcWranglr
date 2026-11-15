@@ -19,8 +19,9 @@ use crate::mcp::tools::verdicts::VerdictChange;
 /// Calls kept; older ones give way.
 const MAX_EVENTS: usize = 500;
 const DEFAULT_WIDTH: f32 = 380.0;
-/// Risky verdicts awaiting approval kept at most.
-const MAX_PENDING: usize = 50;
+/// Risky verdicts awaiting approval kept at most. High enough that a busy
+/// session won't hit it; the agent is told if it does.
+const MAX_PENDING: usize = 1000;
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x6C);
 const PENDING_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x9A, 0x4C);
 /// How often ages are redrawn while calls are shown.
@@ -53,10 +54,10 @@ enum Tab {
 pub enum AgentPanelAction {
     GoTo(Place),
     Assessment(AavrAction),
-    /// The user approved the agent's verdict: apply it.
-    ApplyVerdict(VerdictChange),
-    /// The user rejected it (its summary, for the status bar).
-    RejectVerdict(String),
+    /// The user approved these agent verdicts: apply them.
+    ApplyVerdicts(Vec<VerdictChange>),
+    /// The user rejected this many (for the status bar).
+    RejectVerdicts(usize),
 }
 
 impl AgentPanel {
@@ -79,11 +80,14 @@ impl AgentPanel {
         self.events.truncate(MAX_EVENTS);
     }
 
-    /// Queues a risky verdict for the user to approve.
-    pub fn queue_approval(&mut self, change: VerdictChange) {
-        if self.pending.len() < MAX_PENDING {
-            self.pending.push(change);
+    /// Queues a risky verdict for the user to approve. False if the queue
+    /// is full (so the agent can be told, not left thinking it's queued).
+    pub fn queue_approval(&mut self, change: VerdictChange) -> bool {
+        if self.pending.len() >= MAX_PENDING {
+            return false;
         }
+        self.pending.push(change);
+        true
     }
 
     /// Forgets the calls, pending approvals and the run, for another project.
@@ -131,14 +135,18 @@ impl AgentPanel {
             return None;
         }
         ui.separator();
+        let n = self.pending.len();
+        let injections = self.pending.iter().filter(|c| c.is_injection).count();
         ui.label(
-            RichText::new(format!(
-                "{} waiting for you",
-                plural(self.pending.len(), "agent verdict")
-            ))
-            .color(PENDING_COLOR)
-            .strong(),
+            RichText::new(format!("{} waiting for you", plural(n, "agent verdict")))
+                .color(PENDING_COLOR)
+                .strong(),
         );
+        // Clear the whole queue in one click.
+        if let Some(batch) = self.batch_buttons(ui, n, injections) {
+            return Some(batch);
+        }
+        // Or decide them one at a time.
         let mut resolved = None;
         self.pending.retain(|change| {
             if resolved.is_some() {
@@ -155,17 +163,56 @@ impl AgentPanel {
                     );
                 }
                 if ui.button("Approve").clicked() {
-                    resolved = Some(AgentPanelAction::ApplyVerdict(change.clone()));
+                    resolved = Some(AgentPanelAction::ApplyVerdicts(vec![change.clone()]));
                     keep = false;
                 }
                 if ui.button("Reject").clicked() {
-                    resolved = Some(AgentPanelAction::RejectVerdict(change.summary()));
+                    resolved = Some(AgentPanelAction::RejectVerdicts(1));
                     keep = false;
                 }
             });
             keep
         });
         resolved
+    }
+
+    /// Approve all, approve all but the prompt-injection ones, or reject
+    /// all; whichever is clicked drains the queue accordingly.
+    fn batch_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        n: usize,
+        injections: usize,
+    ) -> Option<AgentPanelAction> {
+        let (mut all, mut safe, mut reject) = (false, false, false);
+        ui.horizontal_wrapped(|ui| {
+            all = ui.button(format!("Approve all ({n})")).clicked();
+            if injections > 0 && injections < n {
+                safe = ui
+                    .button(format!("Approve all but {injections} injection"))
+                    .on_hover_text("Apply every verdict except those on possible prompt injections, which stay for you to review")
+                    .clicked();
+            }
+            reject = ui.button(format!("Reject all ({n})")).clicked();
+        });
+        if all {
+            return Some(AgentPanelAction::ApplyVerdicts(std::mem::take(
+                &mut self.pending,
+            )));
+        }
+        if safe {
+            let (apply, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending)
+                .into_iter()
+                .partition(|c| !c.is_injection);
+            self.pending = keep;
+            return Some(AgentPanelAction::ApplyVerdicts(apply));
+        }
+        if reject {
+            let count = self.pending.len();
+            self.pending.clear();
+            return Some(AgentPanelAction::RejectVerdicts(count));
+        }
+        None
     }
 
     fn contents(

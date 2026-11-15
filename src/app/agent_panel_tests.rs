@@ -5,6 +5,8 @@ use egui_kittest::Harness;
 
 use super::*;
 use crate::mcp::dispatch::Place;
+use crate::mcp::tools::verdicts::VerdictChange;
+use crate::notes::triage::TriageStatus;
 
 struct State {
     panel: AgentPanel,
@@ -131,4 +133,62 @@ fn ages_read_plainly() {
     assert_eq!(age(Duration::from_secs(42)), "42 s");
     assert_eq!(age(Duration::from_secs(150)), "2 min");
     assert_eq!(age(Duration::from_secs(7_300)), "2 h");
+}
+
+fn verdict(rule: &str, is_injection: bool) -> VerdictChange {
+    VerdictChange {
+        file: "m.c".into(),
+        line: 1,
+        rule: rule.into(),
+        status: Some(TriageStatus::FalsePositive),
+        note: String::new(),
+        is_injection,
+    }
+}
+
+#[test]
+fn approve_all_clears_the_queue_in_one_click() {
+    let mut panel = AgentPanel::default();
+    assert!(panel.queue_approval(verdict("a", false)));
+    panel.queue_approval(verdict("b", false));
+    panel.queue_approval(verdict("prompt-injection", true));
+    let mut harness = harness(panel);
+    harness.get_by_label_contains("3 agent verdicts waiting");
+    harness.get_by_label("Approve all (3)").click();
+    harness.run();
+    match harness.state().action.clone() {
+        Some(AgentPanelAction::ApplyVerdicts(v)) => assert_eq!(v.len(), 3),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn approve_all_but_injections_keeps_the_injection_ones() {
+    let mut panel = AgentPanel::default();
+    panel.queue_approval(verdict("a", false));
+    panel.queue_approval(verdict("prompt-injection", true));
+    let mut harness = harness(panel);
+    harness
+        .get_by_label_contains("Approve all but 1 injection")
+        .click();
+    harness.run();
+    match harness.state().action.clone() {
+        Some(AgentPanelAction::ApplyVerdicts(v)) => {
+            assert_eq!(v.len(), 1);
+            assert!(!v[0].is_injection);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_full_queue_is_reported_not_silently_dropped() {
+    let mut panel = AgentPanel::default();
+    for _ in 0..MAX_PENDING {
+        assert!(panel.queue_approval(verdict("x", false)));
+    }
+    assert!(
+        !panel.queue_approval(verdict("x", false)),
+        "the cap is reported"
+    );
 }

@@ -74,11 +74,14 @@ impl SrcWranglrApp {
             // A dismissing verdict, clearing one, or any on a prompt
             // injection waits for the user; an escalating one applies now.
             AgentWrite::Verdict(change) if change.needs_approval() => {
-                self.agent_panel.queue_approval(change.clone());
-                Ok(format!(
-                    "Asked the user to approve ({}). It isn't applied until they do; check a later findings call for the result.",
-                    change.summary()
-                ))
+                if self.agent_panel.queue_approval(change.clone()) {
+                    Ok(format!(
+                        "Asked the user to approve ({}). It isn't applied until they do; check a later findings call for the result.",
+                        change.summary()
+                    ))
+                } else {
+                    Err("SrcWranglr's approval queue is full; ask the user to clear some in the Agent pane, then try again.".into())
+                }
             }
             AgentWrite::Verdict(change) => self.apply_agent_verdict(change),
         }
@@ -86,6 +89,25 @@ impl SrcWranglrApp {
 
     /// Applies an agent's verdict to the matching finding, attributed to
     /// the agent, and says how it went.
+    /// Applies several approved agent verdicts; a one-line summary.
+    fn apply_agent_verdicts(&mut self, changes: &[VerdictChange]) -> String {
+        let (mut applied, mut failed) = (0, 0);
+        for change in changes {
+            match self.apply_agent_verdict(change) {
+                Ok(_) => applied += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        let failed = match failed {
+            0 => String::new(),
+            n => format!(" ({n} could not be applied)"),
+        };
+        format!(
+            "Applied {}{failed}.",
+            crate::mcp::format::count(applied, "agent verdict")
+        )
+    }
+
     fn apply_agent_verdict(&mut self, change: &VerdictChange) -> Result<String, String> {
         let finding = self
             .findings
@@ -132,14 +154,14 @@ impl SrcWranglrApp {
         match action {
             Some(AgentPanelAction::GoTo(place)) => self.show_place(&place),
             Some(AgentPanelAction::Assessment(action)) => self.on_assessment(action, ui.ctx()),
-            Some(AgentPanelAction::ApplyVerdict(change)) => {
-                self.status = match self.apply_agent_verdict(&change) {
-                    Ok(message) => Status::Info(message),
-                    Err(error) => Status::Error(error),
-                };
+            Some(AgentPanelAction::ApplyVerdicts(changes)) => {
+                self.status = Status::Info(self.apply_agent_verdicts(&changes));
             }
-            Some(AgentPanelAction::RejectVerdict(summary)) => {
-                self.status = Status::Info(format!("Rejected the agent's verdict ({summary})."));
+            Some(AgentPanelAction::RejectVerdicts(count)) => {
+                self.status = Status::Info(format!(
+                    "Rejected {}.",
+                    crate::mcp::format::count(count, "agent verdict")
+                ));
             }
             None => {}
         }
