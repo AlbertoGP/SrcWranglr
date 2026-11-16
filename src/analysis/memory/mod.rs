@@ -8,7 +8,7 @@ mod names;
 mod state;
 mod walk;
 
-pub use walk::findings;
+pub use walk::{findings, lifetimes, Lifetimes, PointKind};
 
 #[cfg(test)]
 #[path = "tests.rs"]

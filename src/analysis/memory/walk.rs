@@ -1,10 +1,10 @@
-//! Walking a function body in source order to find use-after-free and
-//! double-free. Each pointer variable that is freed is tracked; a later
-//! dereference or pass-to-a-call of it is a use-after-free, a second free a
-//! double-free. Branches merge conservatively: freed on every path stays
-//! certain (high), freed on some path becomes "maybe" (medium). This is
-//! intraprocedural and syntactic — a lead to confirm, like the other
-//! findings.
+//! Walking a function body in source order to track each pointer's lifetime
+//! — freed, used, freed again, or reassigned. A dereference or pass-to-a-call
+//! of a freed pointer is a use-after-free, a second free a double-free.
+//! Branches merge conservatively: freed on every path stays certain (high),
+//! freed on some path becomes "maybe" (medium). The same walk feeds the
+//! Findings (`findings`) and the per-function invariant matrix (`lifetimes`).
+//! Intraprocedural and syntactic — a lead to confirm.
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,43 +22,128 @@ const DOUBLE_FREE: &str = "double-free";
 /// Which freed variables are live at a point, and where each was freed.
 type State = HashMap<String, Freed>;
 
-/// A use-after-free or double-free the walk found.
-struct Violation {
-    rule: &'static str,
+/// What happened to a tracked pointer at one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointKind {
+    /// The pointer was freed here.
+    Freed,
+    /// It was already freed and is freed again (double-free).
+    FreedAgain,
+    /// It is dereferenced or passed to a call while freed (use-after-free).
+    Used,
+    /// It was assigned a new value, so it is live again.
+    Reassigned,
+}
+
+/// One thing the walk saw happen to a pointer.
+struct Event {
+    kind: PointKind,
     file: String,
-    free_line: u32,
-    at_line: u32,
+    line: u32,
     columns: Option<(u32, u32)>,
     variable: String,
-    /// Freed on every path (high) rather than only some (medium).
+    /// For a violation: freed on every path (high) vs only some (medium).
     certain: bool,
+    /// For a violation: the line the pointer was freed on.
+    freed_at: u32,
 }
 
 /// Use-after-free and double-free findings across the project.
 pub fn findings(graph: &CodeGraph) -> Vec<Finding> {
+    let violations: Vec<Event> = all_events(graph)
+        .into_iter()
+        .filter(|e| matches!(e.kind, PointKind::Used | PointKind::FreedAgain))
+        .collect();
+    let places: Vec<(&str, u32)> = violations
+        .iter()
+        .map(|e| (e.file.as_str(), e.line))
+        .collect();
+    let symbols = functions_holding_lines(graph, &places);
+    violations
+        .into_iter()
+        .zip(symbols)
+        .map(|(event, symbol)| event.into_finding(symbol))
+        .collect()
+}
+
+/// The pointer lifetimes in the function containing `line` of `file` — the
+/// invariant matrix for one function. `None` if that function frees nothing.
+pub fn lifetimes(graph: &CodeGraph, file: &str, line: u32) -> Option<Lifetimes> {
+    let source = graph.file_contents.get(file)?;
+    let mut parser = new_parser()?;
+    let tree = parser.parse(source, None)?;
+    let body = function_body_containing(tree.root_node(), line)?;
+    let mut events = Vec::new();
+    walk_stmt(file, source, body, &mut State::new(), &mut events);
+    if events.is_empty() {
+        return None;
+    }
+    let function = body.parent()?;
+    let mut order = Vec::new();
+    let mut points: HashMap<String, Vec<Point>> = HashMap::new();
+    for event in events {
+        if !points.contains_key(&event.variable) {
+            order.push(event.variable.clone());
+        }
+        points
+            .entry(event.variable.clone())
+            .or_default()
+            .push(Point {
+                line: event.line,
+                kind: event.kind,
+            });
+    }
+    let rows = order
+        .into_iter()
+        .map(|variable| Lifeline {
+            points: points.remove(&variable).unwrap_or_default(),
+            variable,
+        })
+        .collect();
+    Some(Lifetimes {
+        first_line: function.start_position().row as u32 + 1,
+        last_line: function.end_position().row as u32 + 1,
+        rows,
+    })
+}
+
+/// The pointer lifetimes in one function, for the invariant-matrix view.
+pub struct Lifetimes {
+    /// 1-based first and last line of the function.
+    pub first_line: u32,
+    pub last_line: u32,
+    /// One row per pointer the function frees, in first-freed order.
+    pub rows: Vec<Lifeline>,
+}
+
+/// One pointer's lifetime: its events, in line order.
+pub struct Lifeline {
+    pub variable: String,
+    pub points: Vec<Point>,
+}
+
+/// A transition in a pointer's lifetime, to show in the matrix.
+pub struct Point {
+    pub line: u32,
+    pub kind: PointKind,
+}
+
+/// Every pointer event across the project's functions.
+fn all_events(graph: &CodeGraph) -> Vec<Event> {
     let Some(mut parser) = new_parser() else {
         return Vec::new();
     };
-    let mut violations = Vec::new();
+    let mut events = Vec::new();
     for (file, source) in &graph.file_contents {
         // Cheap gate: every free-like name contains "free".
         if !source.contains("free") {
             continue;
         }
         if let Some(tree) = parser.parse(source, None) {
-            walk_functions(file, source, tree.root_node(), &mut violations);
+            walk_functions(file, source, tree.root_node(), &mut events);
         }
     }
-    let places: Vec<(&str, u32)> = violations
-        .iter()
-        .map(|v| (v.file.as_str(), v.at_line))
-        .collect();
-    let symbols = functions_holding_lines(graph, &places);
-    violations
-        .into_iter()
-        .zip(symbols)
-        .map(|(violation, symbol)| violation.into_finding(symbol))
-        .collect()
+    events
 }
 
 fn new_parser() -> Option<Parser> {
@@ -70,7 +155,7 @@ fn new_parser() -> Option<Parser> {
 }
 
 /// Walk each function definition in the tree with a fresh state.
-fn walk_functions(file: &str, source: &str, root: Node, out: &mut Vec<Violation>) {
+fn walk_functions(file: &str, source: &str, root: Node, out: &mut Vec<Event>) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         if node.kind() == "function_definition" {
@@ -85,8 +170,25 @@ fn walk_functions(file: &str, source: &str, root: Node, out: &mut Vec<Violation>
     }
 }
 
+/// The innermost function definition's body whose lines contain `line`.
+fn function_body_containing(root: Node, line: u32) -> Option<Node> {
+    let row = line.saturating_sub(1) as usize;
+    let mut found = None;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let holds = node.start_position().row <= row && row <= node.end_position().row;
+        if node.kind() == "function_definition" && holds {
+            found = Some(node);
+        }
+        for child in named_children(node) {
+            stack.push(child);
+        }
+    }
+    found?.child_by_field_name("body")
+}
+
 /// Carry the state through one statement, in source order.
-fn walk_stmt(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Violation>) {
+fn walk_stmt(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Event>) {
     match node.kind() {
         "compound_statement" => {
             for stmt in named_children(node) {
@@ -103,7 +205,7 @@ fn walk_stmt(file: &str, source: &str, node: Node, state: &mut State, out: &mut 
 }
 
 /// Both arms of an `if`, merged conservatively after the join.
-fn walk_if(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Violation>) {
+fn walk_if(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Event>) {
     if let Some(cond) = node.child_by_field_name("condition") {
         visit_expr(file, source, cond, state, out);
     }
@@ -119,14 +221,13 @@ fn walk_if(file: &str, source: &str, node: Node, state: &mut State, out: &mut Ve
             walk_stmt(file, source, alt, &mut branch, out);
             arms.push(branch);
         }
-        // No else: the other path leaves the state as it entered.
         None => arms.push(state.clone()),
     }
     *state = merge_states(&arms);
 }
 
 /// A loop body may or may not run, so a free inside it is only "maybe".
-fn walk_loop(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Violation>) {
+fn walk_loop(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Event>) {
     if let Some(cond) = node.child_by_field_name("condition") {
         visit_expr(file, source, cond, state, out);
     }
@@ -137,9 +238,9 @@ fn walk_loop(file: &str, source: &str, node: Node, state: &mut State, out: &mut 
     }
 }
 
-/// A `switch`: walk the body, then weaken any frees to "maybe" since which
-/// case ran is conditional.
-fn walk_switch(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Violation>) {
+/// A `switch`: walk the body, then weaken frees to "maybe" since which case
+/// ran is conditional.
+fn walk_switch(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Event>) {
     if let Some(body) = node.child_by_field_name("body") {
         let mut inner = state.clone();
         walk_stmt(file, source, body, &mut inner, out);
@@ -150,8 +251,8 @@ fn walk_switch(file: &str, source: &str, node: Node, state: &mut State, out: &mu
     }
 }
 
-/// Walk an expression (statement) for frees, reassignments and uses.
-fn visit_expr(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Violation>) {
+/// Walk an expression for frees, reassignments and uses.
+fn visit_expr(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Event>) {
     match node.kind() {
         "assignment_expression" => {
             if let Some(right) = node.child_by_field_name("right") {
@@ -159,10 +260,8 @@ fn visit_expr(file: &str, source: &str, node: Node, state: &mut State, out: &mut
             }
             if let Some(left) = node.child_by_field_name("left") {
                 if left.kind() == "identifier" {
-                    // Reassigned: the variable is live again.
-                    state.remove(text(source, left));
+                    reassign(file, source, left, state, out);
                 } else {
-                    // `*p = …`, `p->f = …`: a write through the pointer.
                     visit_expr(file, source, left, state, out);
                 }
             }
@@ -196,7 +295,7 @@ fn visit_expr(file: &str, source: &str, node: Node, state: &mut State, out: &mut
 }
 
 /// A call: `free(p)` frees `p`; any other call uses its simple arguments.
-fn visit_call(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Violation>) {
+fn visit_call(file: &str, source: &str, node: Node, state: &mut State, out: &mut Vec<Event>) {
     let name = node
         .child_by_field_name("function")
         .map(|f| text(source, f));
@@ -208,7 +307,6 @@ fn visit_call(file: &str, source: &str, node: Node, state: &mut State, out: &mut
                 return;
             }
         }
-        // A normal call: a freed pointer passed in is a use.
         for arg in named_children(args) {
             if arg.kind() == "identifier" {
                 use_ident(file, source, arg, state, out);
@@ -219,43 +317,70 @@ fn visit_call(file: &str, source: &str, node: Node, state: &mut State, out: &mut
     }
 }
 
-/// Record a free of `ident`: double-free if already freed, then mark freed.
+/// Record a free of `ident`: a double-free if already freed, then freed.
 fn free_variable(
     file: &str,
     source: &str,
     call: Node,
     ident: Node,
     state: &mut State,
-    out: &mut Vec<Violation>,
+    out: &mut Vec<Event>,
 ) {
     let name = text(source, ident);
+    let line = line_of(call);
     if let Some(freed) = state.get(name).copied() {
-        out.push(Violation {
-            rule: DOUBLE_FREE,
+        out.push(Event {
+            kind: PointKind::FreedAgain,
             file: file.to_string(),
-            free_line: freed.line(),
-            at_line: line_of(call),
+            line,
             columns: columns_of(call),
             variable: name.to_string(),
             certain: freed.is_certain(),
+            freed_at: freed.line(),
+        });
+    } else {
+        out.push(Event {
+            kind: PointKind::Freed,
+            file: file.to_string(),
+            line,
+            columns: columns_of(ident),
+            variable: name.to_string(),
+            certain: true,
+            freed_at: line,
         });
     }
-    state.insert(name.to_string(), Freed::Always(line_of(call)));
+    state.insert(name.to_string(), Freed::Always(line));
 }
 
-/// Record a use of `ident` if it is a freed variable (then stop tracking it,
-/// so one free yields one finding).
-fn use_ident(file: &str, source: &str, ident: Node, state: &mut State, out: &mut Vec<Violation>) {
+/// Record a use of `ident` if it is freed (then stop tracking it, so one
+/// free yields one finding).
+fn use_ident(file: &str, source: &str, ident: Node, state: &mut State, out: &mut Vec<Event>) {
     let name = text(source, ident);
     if let Some(freed) = state.remove(name) {
-        out.push(Violation {
-            rule: USE_AFTER_FREE,
+        out.push(Event {
+            kind: PointKind::Used,
             file: file.to_string(),
-            free_line: freed.line(),
-            at_line: line_of(ident),
+            line: line_of(ident),
             columns: columns_of(ident),
             variable: name.to_string(),
             certain: freed.is_certain(),
+            freed_at: freed.line(),
+        });
+    }
+}
+
+/// Record that a freed variable was reassigned, so it is live again.
+fn reassign(file: &str, source: &str, ident: Node, state: &mut State, out: &mut Vec<Event>) {
+    let name = text(source, ident);
+    if state.remove(name).is_some() {
+        out.push(Event {
+            kind: PointKind::Reassigned,
+            file: file.to_string(),
+            line: line_of(ident),
+            columns: columns_of(ident),
+            variable: name.to_string(),
+            certain: false,
+            freed_at: 0,
         });
     }
 }
@@ -277,8 +402,7 @@ fn merge_states(states: &[State]) -> State {
     out
 }
 
-/// The pointer variable a `*p` / `p->f` / `p[i]` dereferences, if it is a
-/// plain identifier.
+/// The pointer a `*p` / `p->f` / `p[i]` dereferences, if a plain identifier.
 fn deref_base(node: Node) -> Option<Node> {
     let base = node
         .child_by_field_name("argument")
@@ -299,11 +423,10 @@ fn declared_name(declarator: Node) -> Option<Node> {
     }
 }
 
-/// The one identifier argument of a call's argument list, if it has exactly
-/// one and it is a plain identifier.
+/// The one identifier argument of a call, if it has exactly one and it is a
+/// plain identifier.
 fn single_identifier(args: Node) -> Option<Node> {
-    let children = named_children(args);
-    match children.as_slice() {
+    match named_children(args).as_slice() {
         [arg] if arg.kind() == "identifier" => Some(*arg),
         _ => None,
     }
@@ -328,28 +451,30 @@ fn columns_of(node: Node) -> Option<(u32, u32)> {
     (start.row == end.row).then_some((start.column as u32, end.column as u32))
 }
 
-impl Violation {
+impl Event {
     fn into_finding(self, symbol: Option<SymbolId>) -> Finding {
         let on_a_path = if self.certain { "" } else { " on some path" };
-        let (cwe, message) = match self.rule {
-            DOUBLE_FREE => (
+        let (rule, cwe, message) = match self.kind {
+            PointKind::FreedAgain => (
+                DOUBLE_FREE,
                 415,
                 format!(
                     "`{}` is freed again{on_a_path}; it was already freed at line {}.",
-                    self.variable, self.free_line
+                    self.variable, self.freed_at
                 ),
             ),
             _ => (
+                USE_AFTER_FREE,
                 416,
                 format!(
                     "`{}` is used{on_a_path} after it was freed at line {}.",
-                    self.variable, self.free_line
+                    self.variable, self.freed_at
                 ),
             ),
         };
         Finding {
             tool: "SrcWranglr".to_string(),
-            rule: self.rule.to_string(),
+            rule: rule.to_string(),
             severity: if self.certain {
                 Severity::High
             } else {
@@ -359,7 +484,7 @@ impl Violation {
             fix: None,
             cwe: Some(cwe),
             file: self.file,
-            line: self.at_line,
+            line: self.line,
             columns: self.columns,
             symbol,
         }

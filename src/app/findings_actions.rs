@@ -157,7 +157,15 @@ impl SrcWranglrApp {
             .reach
             .finding_path(&finding)
             .map(|path| describe(&path, &self.project.graph));
-        self.finding_view = Some(FindingView::new(finding, function, input, verdict));
+        // For a use-after-free or double-free, show the pointer lifetimes
+        // (the invariant matrix) in the function that led to it.
+        let lifetimes = matches!(finding.rule.as_str(), "use-after-free" | "double-free")
+            .then(|| {
+                crate::analysis::memory::lifetimes(&self.project.graph, &finding.file, finding.line)
+            })
+            .flatten();
+        self.finding_view =
+            Some(FindingView::new(finding, function, input, verdict).with_lifetimes(lifetimes));
     }
 
     pub(super) fn show_finding_view(&mut self, ctx: &egui::Context) {

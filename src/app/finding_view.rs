@@ -5,12 +5,27 @@ use egui::{Id, RichText};
 
 use super::findings::verdict_label;
 use super::visible::{visible, visible_lines};
+use crate::analysis::memory::{Lifetimes, PointKind};
 use crate::analysis::{risky, silenced, Finding};
 use crate::model::SymbolId;
 use crate::notes::triage::TriageStatus;
 use crate::style::{severity_text_color, INPUT_COLOR};
 
 const WIDTH: f32 = 460.0;
+/// A freed pointer, in the lifetime row.
+const FREED_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x9A, 0x4C);
+/// A use-after-free or double-free, in the lifetime row.
+const VIOLATION_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x6C);
+
+/// The label and color for one point in a pointer's lifetime.
+fn lifetime_chip(kind: PointKind) -> (&'static str, egui::Color32) {
+    match kind {
+        PointKind::Freed => ("freed", FREED_COLOR),
+        PointKind::FreedAgain => ("freed again", VIOLATION_COLOR),
+        PointKind::Used => ("used", VIOLATION_COLOR),
+        PointKind::Reassigned => ("reassigned", egui::Color32::GRAY),
+    }
+}
 
 /// What the user asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +50,9 @@ pub struct FindingView {
     /// Your verdict as being edited.
     verdict: Option<TriageStatus>,
     note: String,
+    /// The pointer lifetimes in the enclosing function, for a memory-safety
+    /// finding — the invariant matrix that led to it.
+    lifetimes: Option<Lifetimes>,
 }
 
 impl FindingView {
@@ -53,7 +71,15 @@ impl FindingView {
             input,
             verdict,
             note,
+            lifetimes: None,
         }
+    }
+
+    /// Attaches the pointer-lifetime matrix (for a use-after-free or
+    /// double-free finding).
+    pub fn with_lifetimes(mut self, lifetimes: Option<Lifetimes>) -> Self {
+        self.lifetimes = lifetimes;
+        self
     }
 
     pub fn finding(&self) -> &Finding {
@@ -70,6 +96,37 @@ impl FindingView {
         response
             .inner
             .or_else(|| should_close.then_some(FindingViewAction::Close))
+    }
+
+    /// The pointer-lifetime rows — the invariant matrix that led to a
+    /// use-after-free or double-free: each freed pointer and what became of
+    /// it, line by line.
+    fn lifetimes_section(&self, ui: &mut egui::Ui) {
+        let Some(lifetimes) = &self.lifetimes else {
+            return;
+        };
+        ui.add_space(4.0);
+        ui.strong("Pointer lifetimes");
+        ui.weak(format!(
+            "in lines {}-{}",
+            lifetimes.first_line, lifetimes.last_line
+        ));
+        for row in &lifetimes.rows {
+            ui.horizontal_wrapped(|ui| {
+                ui.monospace(RichText::new(format!("{}:", visible(&row.variable))).strong());
+                for (index, point) in row.points.iter().enumerate() {
+                    if index > 0 {
+                        ui.weak("->");
+                    }
+                    let (label, color) = lifetime_chip(point.kind);
+                    ui.label(
+                        RichText::new(format!("{label} L{}", point.line))
+                            .monospace()
+                            .color(color),
+                    );
+                }
+            });
+        }
     }
 
     fn contents(&mut self, ui: &mut egui::Ui) -> Option<FindingViewAction> {
@@ -111,6 +168,7 @@ impl FindingView {
             ui.strong("How to fix");
             ui.label(visible_lines(fix));
         }
+        self.lifetimes_section(ui);
         ui.add_space(4.0);
         ui.weak(format!("Found by {}", visible(&f.tool)));
         ui.separator();
@@ -369,5 +427,28 @@ mod tests {
     fn without_a_known_function_there_is_nothing_to_explore() {
         let harness = harness(None);
         assert!(harness.query_by_label_contains("Explore").is_none());
+    }
+
+    #[test]
+    fn shows_the_pointer_lifetime_matrix_for_a_memory_finding() {
+        use crate::index::graph_of_files;
+        let graph = graph_of_files(&[("a.c", "void f(char *p) {\n   free(p);\n   *p = 0;\n}\n")]);
+        let lifetimes = crate::analysis::memory::lifetimes(&graph, "a.c", 2);
+        assert!(lifetimes.is_some());
+        let view =
+            FindingView::new(finding(), Some("f".into()), None, None).with_lifetimes(lifetimes);
+        let mut harness = Harness::new_ui_state(
+            |ui, state: &mut State| {
+                let ctx = ui.ctx().clone();
+                if let Some(action) = state.view.show(&ctx) {
+                    state.action = Some(action);
+                }
+            },
+            State { view, action: None },
+        );
+        harness.run();
+        harness.get_by_label("Pointer lifetimes");
+        assert!(harness.query_by_label_contains("freed L2").is_some());
+        assert!(harness.query_by_label_contains("used L3").is_some());
     }
 }

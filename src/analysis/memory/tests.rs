@@ -152,3 +152,26 @@ fn freeing_inside_a_branch_with_no_later_use_is_not_flagged() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn lifetimes_lists_each_pointers_free_and_use() {
+    use super::{lifetimes, PointKind};
+    let graph = graph_of_files(&[(
+        "a.c",
+        "void f(char *p, char *q) {\n   free(p);\n   *p = 0;\n   free(q);\n}\n",
+    )]);
+    let matrix = lifetimes(&graph, "a.c", 2).expect("lifetimes");
+    assert_eq!((matrix.first_line, matrix.last_line), (1, 5));
+    assert_eq!(matrix.rows.len(), 2);
+    let p = &matrix.rows[0];
+    assert_eq!(p.variable, "p");
+    let points: Vec<_> = p.points.iter().map(|pt| (pt.line, pt.kind)).collect();
+    assert_eq!(points, [(2, PointKind::Freed), (3, PointKind::Used)]);
+    // q is freed but never misused: still shown, just the free.
+    let q = &matrix.rows[1];
+    assert_eq!(q.variable, "q");
+    assert_eq!(
+        q.points.iter().map(|pt| pt.kind).collect::<Vec<_>>(),
+        [PointKind::Freed]
+    );
+}
