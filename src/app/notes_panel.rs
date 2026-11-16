@@ -137,13 +137,21 @@ impl NotesPanel {
                 .on_hover_text("A log of your audit: what you did, theories, what to try next");
         });
         ui.separator();
-        match self.tab {
+        let action = match self.tab {
             NotesTab::Notes => self.notes(ui, notebook),
             NotesTab::Journal => self
                 .journal
                 .show(ui, journal)
                 .map(NotesPanelAction::Journal),
-        }
+        };
+        // Claim the pane's full width unconditionally. egui stores a
+        // resizable panel at its content's width when the drag is released
+        // (and on any later re-layout frame), so a tab whose content wraps
+        // to just under the width — the Journal's markdown entries, which
+        // the agent also rewrites live — would otherwise let the pane snap
+        // back. A full-width strip pins the stored width to the pane.
+        ui.allocate_space(egui::vec2(ui.available_width(), 0.0));
+        action
     }
 
     fn notes(&mut self, ui: &mut egui::Ui, notebook: &Notebook) -> Option<NotesPanelAction> {
@@ -364,6 +372,65 @@ mod resize_tests {
         assert!(
             after < before - 40.0,
             "the pane should stay wider after release: central space {before} -> {after}"
+        );
+    }
+
+    fn widen_journal(with_entry: bool) -> (f32, f32) {
+        let project = Project::demo().expect("demo");
+        let mut panel = NotesPanel::default();
+        panel.set_open(true);
+        panel.open_journal();
+        let mut journal = Journal::default();
+        if with_entry {
+            journal = journal
+                .with_added(crate::notes::journal::Entry::new(
+                    "looked at parse_header",
+                    None,
+                    0,
+                ))
+                .expect("added");
+        }
+        let mut harness = crate::app::fonts::test_harness()
+            .with_size(vec2(800.0, 600.0))
+            .with_accessibility_check(false)
+            .build_ui_state(
+                |ui, s: &mut S| {
+                    let context = JournalContext {
+                        journal: &s.journal,
+                        here: None,
+                        storage: Ok("in memory"),
+                        now: 0,
+                    };
+                    s.panel.show(ui, &s.notebook, &context, Layout::default());
+                    s.central_avail = ui.available_width();
+                },
+                S {
+                    panel,
+                    notebook: Notebook::open(&project),
+                    journal,
+                    central_avail: 0.0,
+                },
+            );
+        let settle = |h: &mut egui_kittest::Harness<S>| (0..40).for_each(|_| h.step());
+        settle(&mut harness);
+        let before = harness.state().central_avail;
+        harness.drag_at(pos2(520.0, 300.0));
+        harness.step();
+        harness.hover_at(pos2(470.0, 300.0));
+        harness.step();
+        harness.hover_at(pos2(420.0, 300.0));
+        harness.step();
+        harness.drop_at(pos2(420.0, 300.0));
+        settle(&mut harness);
+        (before, harness.state().central_avail)
+    }
+
+    #[test]
+    fn the_journal_tab_resizes_and_sticks() {
+        let (before, after) = widen_journal(true);
+        assert!(
+            after < before - 40.0,
+            "the Journal tab should stay wider after release: central space {before} -> {after}"
         );
     }
 }
