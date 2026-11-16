@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use super::project::Project;
-use crate::mcp::args::{AddNoteArgs, ImportSarifArgs, JournalArgs};
+use crate::mcp::args::{AddNoteArgs, ImportSarifArgs, JournalArgs, VerdictArgs};
 use crate::mcp::dispatch::{asked, dispatch, parsed, place_of, Place};
 use crate::mcp::format::{shown, MAX_TEXT_CHARS};
 use crate::mcp::state::State;
@@ -172,6 +172,32 @@ impl AgentBridge {
     }
 }
 
+/// The tools whose effect the app owns (notes, the journal, Findings), so
+/// a write to one is made on the app thread, not on the index alone.
+pub(crate) const WRITE_TOOLS: [&str; 4] =
+    ["add_note", "journal_entry", "import_sarif", "set_verdict"];
+
+/// The write a write tool asks for, validated against `ws`. `tool` must be
+/// one of `WRITE_TOOLS`.
+pub(crate) fn agent_write_for(
+    ws: &Workspace,
+    tool: &str,
+    args: Value,
+    now: u64,
+) -> Result<AgentWrite, String> {
+    Ok(match tool {
+        "add_note" => AgentWrite::Note(note_change(ws, &parsed::<AddNoteArgs>(args)?)?),
+        "journal_entry" => {
+            AgentWrite::Journal(journal_change(ws, &parsed::<JournalArgs>(args)?, now)?)
+        }
+        "import_sarif" => {
+            AgentWrite::Sarif(sarif_file(ws, &parsed::<ImportSarifArgs>(args)?.file)?)
+        }
+        "set_verdict" => AgentWrite::Verdict(verdict_change(ws, &parsed::<VerdictArgs>(args)?)?),
+        other => return Err(format!("{other} is not a write tool")),
+    })
+}
+
 /// What answers each call, on the bridge's threads.
 struct Calls {
     name: String,
@@ -219,19 +245,10 @@ impl Calls {
 
     fn run(&self, ws: &Workspace, tool: &str, args: Value) -> Result<String, String> {
         // The app keeps notes, the journal and Findings, so it makes these.
-        let write = match tool {
-            "add_note" => AgentWrite::Note(note_change(ws, &parsed::<AddNoteArgs>(args)?)?),
-            "journal_entry" => {
-                let args: JournalArgs = parsed(args)?;
-                AgentWrite::Journal(journal_change(ws, &args, unix_now())?)
-            }
-            "import_sarif" => {
-                let args: ImportSarifArgs = parsed(args)?;
-                AgentWrite::Sarif(sarif_file(ws, &args.file)?)
-            }
-            "set_verdict" => AgentWrite::Verdict(verdict_change(ws, &parsed(args)?)?),
-            _ => return dispatch(ws, tool, args, unix_now()),
-        };
+        if !WRITE_TOOLS.contains(&tool) {
+            return dispatch(ws, tool, args, unix_now());
+        }
+        let write = agent_write_for(ws, tool, args, unix_now())?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.notes
             .try_send(NoteRequest {

@@ -32,6 +32,7 @@ mod history_changes;
 mod history_cves;
 mod history_function;
 mod history_panel;
+mod in_app_agent;
 mod journal_actions;
 mod journal_view;
 pub mod launch;
