@@ -9,6 +9,7 @@
 // these land next. Remove once they do.
 #![allow(dead_code)]
 
+pub mod exec;
 pub mod llm;
 pub mod openai;
 pub mod prompt;

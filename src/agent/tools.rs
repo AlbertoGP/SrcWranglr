@@ -120,6 +120,10 @@ pub fn specs() -> Vec<ToolSpec> {
             "set_verdict",
             "Mark a finding (by its file, line and rule, as findings lists them): confirmed, false_positive, reviewed or clear. Dismissing one, or any verdict on a prompt injection, waits for the user's approval.",
         ),
+        typed::<crate::agent::exec::RunCommandArgs>(
+            "run_command",
+            "Run a shell command in the project's folder (sh -c): build a harness, run a fuzzer for a fixed time, reproduce a crash, run semgrep. The user approves each command before it runs; output is capped and it is killed at its time limit.",
+        ),
     ]
 }
 
@@ -134,7 +138,9 @@ mod tests {
         for tool in crate::mcp::dispatch::TOOLS {
             assert!(names.contains(&tool), "{tool} has no spec");
         }
-        assert_eq!(specs.len(), crate::mcp::dispatch::TOOLS.len());
+        // Every dispatch tool, plus run_command (in-app only).
+        assert_eq!(specs.len(), crate::mcp::dispatch::TOOLS.len() + 1);
+        assert!(names.contains(&"run_command"));
         // Schemas are real objects, and a tool with args describes them.
         let find = specs
             .iter()
