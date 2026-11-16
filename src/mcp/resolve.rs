@@ -6,11 +6,54 @@ use crate::analysis::risky::bare_library_name;
 use crate::code_view::Referenced;
 use crate::model::SymbolId;
 
-use super::format::{count, name_and_place};
+use super::format::{count, name_and_place, shown, MAX_CODE_CHARS};
 use super::workspace::Workspace;
 
 /// Candidates listed when a name is ambiguous.
 const MAX_CANDIDATES: usize = 20;
+
+/// The indexed file `given` names: its exact project-relative path, or —
+/// when that is not indexed — the one indexed file whose path ends in that
+/// name, so a bare `parse.c` resolves to `net/parse.c` when it is the only
+/// file with that name. An unknown or ambiguous name is an error. Agents
+/// often pass a basename, which other tools print with its folder.
+pub fn file(ws: &Workspace, given: &str) -> Result<String, String> {
+    let files = &ws.graph().file_contents;
+    let given = given.trim().trim_start_matches("./");
+    if files.contains_key(given) {
+        return Ok(given.to_string());
+    }
+    let suffix = format!("/{given}");
+    let mut matches: Vec<&str> = files
+        .keys()
+        .map(String::as_str)
+        .filter(|k| k.ends_with(suffix.as_str()))
+        .collect();
+    matches.sort_unstable();
+    match matches.as_slice() {
+        [one] => Ok((*one).to_string()),
+        [] => Err(not_indexed(given)),
+        several => Err(format!(
+            "{} matches {} indexed files ({}); give the project-relative path.",
+            shown(given, MAX_CODE_CHARS),
+            several.len(),
+            several
+                .iter()
+                .take(MAX_CANDIDATES)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
+    }
+}
+
+/// The message shown when `file` is not an indexed path.
+pub fn not_indexed(file: &str) -> String {
+    format!(
+        "{} is not an indexed file. Files are project-relative, as other tools list them (net/parse.c).",
+        shown(file, MAX_CODE_CHARS)
+    )
+}
 
 /// The one symbol `name` names (in `file`, if given).
 pub fn symbol(ws: &Workspace, name: &str, file: Option<&str>) -> Result<SymbolId, String> {
@@ -106,4 +149,46 @@ fn ambiguous(ws: &Workspace, name: &str, ids: &[SymbolId]) -> String {
         lines.push(format!("  … {} more", ids.len() - MAX_CANDIDATES));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::graph_of_files;
+    use crate::mcp::fixture::workspace;
+
+    #[test]
+    fn an_exact_project_relative_path_resolves() {
+        let ws = workspace();
+        assert_eq!(file(&ws, "net/parse.c").unwrap(), "net/parse.c");
+        assert_eq!(file(&ws, "./net/parse.c").unwrap(), "net/parse.c");
+    }
+
+    #[test]
+    fn a_bare_basename_resolves_to_the_unique_indexed_file() {
+        let ws = workspace();
+        // The agent writes `parse.c`; it is indexed under `net/parse.c`.
+        assert_eq!(file(&ws, "parse.c").unwrap(), "net/parse.c");
+        assert_eq!(file(&ws, "a.c").unwrap(), "drivers/a.c");
+    }
+
+    #[test]
+    fn an_unknown_file_is_refused() {
+        let ws = workspace();
+        assert!(file(&ws, "nope.c")
+            .unwrap_err()
+            .contains("not an indexed file"));
+    }
+
+    #[test]
+    fn an_ambiguous_basename_lists_the_matches() {
+        let graph = graph_of_files(&[("a/dup.c", "int a;\n"), ("b/dup.c", "int b;\n")]);
+        let ws = crate::mcp::workspace::Workspace::new("t", None, graph);
+        let err = file(&ws, "dup.c").unwrap_err();
+        assert!(
+            err.contains("matches") && err.contains("indexed files"),
+            "{err}"
+        );
+        assert!(err.contains("a/dup.c") && err.contains("b/dup.c"), "{err}");
+    }
 }

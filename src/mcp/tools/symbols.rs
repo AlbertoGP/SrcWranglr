@@ -190,6 +190,7 @@ fn definition(ws: &Workspace, name: &str, metrics: &FunctionMetrics) -> Result<S
 
 /// Lines `start_line..=end_line` of an indexed file, numbered.
 pub fn read_source(ws: &Workspace, args: &ReadSourceArgs) -> Result<String, String> {
+    let file = resolve::file(ws, &args.file)?;
     let start = args.start_line.max(1);
     let wanted = args
         .end_line
@@ -197,11 +198,11 @@ pub fn read_source(ws: &Workspace, args: &ReadSourceArgs) -> Result<String, Stri
     let end = wanted
         .max(start)
         .min(start.saturating_add(MAX_READ_LINES - 1));
-    let (total, body) = numbered(ws, &args.file, start, end)?;
+    let (total, body) = numbered(ws, &file, start, end)?;
     let last = end.min(total);
     Ok(format!(
         "{}-{last} of {}\n{body}",
-        place(&args.file, start),
+        place(&file, start),
         count(total as usize, "line")
     ))
 }

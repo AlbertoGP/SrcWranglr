@@ -171,24 +171,20 @@ pub fn target_of(ws: &Workspace, target: &str) -> Result<(NoteTarget, Option<Str
             .ok_or("That symbol is gone.")?;
         return Ok((NoteTarget::Symbol(name), None));
     };
-    let contents = ws.graph().file_contents.get(file).ok_or_else(|| {
-        format!(
-            "{} is not an indexed file. Files are project-relative, as other tools list them (net/parse.c).",
-            shown(file, MAX_CODE_CHARS)
-        )
-    })?;
-    let lines = contents.lines().count();
-    let anchor = ws.line(file, line).ok_or_else(|| {
+    let file = resolve::file(ws, file)?;
+    let anchor = ws.line(&file, line).ok_or_else(|| {
+        let lines = ws
+            .graph()
+            .file_contents
+            .get(&file)
+            .map_or(0, |c| c.lines().count());
         format!(
             "{} has {}.",
-            shown(file, MAX_CODE_CHARS),
+            shown(&file, MAX_CODE_CHARS),
             count(lines, "line")
         )
     })?;
-    let target = NoteTarget::Line {
-        file: file.to_string(),
-        line,
-    };
+    let target = NoteTarget::Line { file, line };
     Ok((target, Some(anchor.trim().to_string())))
 }
 

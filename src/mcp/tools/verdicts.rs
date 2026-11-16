@@ -8,6 +8,7 @@
 use crate::analysis::injection;
 use crate::mcp::args::{VerdictArgs, VerdictStatus};
 use crate::mcp::format::{place, shown, MAX_CODE_CHARS, MAX_TEXT_CHARS};
+use crate::mcp::resolve;
 use crate::mcp::workspace::Workspace;
 use crate::notes::triage::TriageStatus;
 
@@ -59,16 +60,17 @@ pub fn verdict_change(ws: &Workspace, args: &VerdictArgs) -> Result<VerdictChang
         VerdictStatus::Clear => None,
     };
     let rule = args.rule.trim();
+    let file = resolve::file(ws, &args.file)?;
     let findings = ws.findings();
     let matched = findings
         .all()
         .iter()
-        .find(|f| f.file == args.file && f.line == args.line && f.rule.eq_ignore_ascii_case(rule));
+        .find(|f| f.file == file && f.line == args.line && f.rule.eq_ignore_ascii_case(rule));
     let Some(finding) = matched else {
         return Err(format!(
             "No {} finding at {}. Use findings to see them, with their exact rule, file and line.",
             shown(rule, MAX_CODE_CHARS),
-            place(&args.file, args.line)
+            place(&file, args.line)
         ));
     };
     let note = args

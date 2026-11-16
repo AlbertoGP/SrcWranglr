@@ -9,6 +9,7 @@ use crate::mcp::args::{DraftRuleArgs, TraceArgs, TraceDirection};
 use crate::mcp::format::{
     code_at, count, name_of, place, shown, shown_file, MAX_CODE_CHARS, MAX_TEXT_CHARS, UNTRUSTED,
 };
+use crate::mcp::resolve;
 use crate::mcp::workspace::Workspace;
 
 /// Paths listed at most, and steps per path.
@@ -20,21 +21,22 @@ const MAX_STEPS: usize = 30;
 /// Where a value comes from or goes, every step on the way.
 pub fn trace(ws: &Workspace, args: &TraceArgs) -> Result<String, String> {
     let graph = ws.graph();
+    let file = resolve::file(ws, &args.file)?;
     let text = ws
-        .line(&args.file, args.line)
-        .ok_or_else(|| no_line(ws, &args.file))?;
+        .line(&file, args.line)
+        .ok_or_else(|| no_line(ws, &file))?;
     let column = match args.name.as_deref().map(str::trim) {
         Some(name) if !name.is_empty() => column_of(text, name).ok_or_else(|| {
             format!(
                 "`{}` isn't on {}; give a variable written on that line.",
                 shown(name, MAX_CODE_CHARS),
-                place(&args.file, args.line)
+                place(&file, args.line)
             )
         })?,
         _ => 0,
     };
     let has_name = args.name.as_deref().is_some_and(|n| !n.trim().is_empty());
-    let (file, line) = (args.file.as_str(), args.line);
+    let (file, line) = (file.as_str(), args.line);
     let traced = match (args.direction.unwrap_or(TraceDirection::Back), has_name) {
         (TraceDirection::Back, true) => trace::trace_variable(graph, file, line, column),
         (TraceDirection::Back, false) => trace::trace_call(graph, file, line, column),
@@ -133,20 +135,20 @@ fn no_line(ws: &Workspace, file: &str) -> String {
 
 /// A semgrep rule finding code like lines `first_line..=last_line`.
 pub fn draft_rule(ws: &Workspace, args: &DraftRuleArgs) -> Result<String, String> {
+    let file = resolve::file(ws, &args.file)?;
     let text = ws
         .graph()
         .file_contents
-        .get(&args.file)
-        .ok_or_else(|| no_line(ws, &args.file))?;
+        .get(&file)
+        .ok_or_else(|| no_line(ws, &file))?;
     let first = args.first_line.max(1);
     let last = args
         .last_line
         .unwrap_or(first)
         .max(first)
         .min(first.saturating_add(MAX_RULE_LINES - 1));
-    ws.line(&args.file, last)
-        .ok_or_else(|| no_line(ws, &args.file))?;
-    let example = Example::lines(&args.file, first, last);
+    ws.line(&file, last).ok_or_else(|| no_line(ws, &file))?;
+    let example = Example::lines(&file, first, last);
     let draft = draft_from(&[(example.clone(), text.as_str())], false)?;
     let looseness = match args.any_values.unwrap_or(false) && draft.any_values.is_some() {
         true => Looseness::AnyValues,
