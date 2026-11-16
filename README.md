@@ -85,7 +85,8 @@ Install them with `brew install semgrep cppcheck flawfinder`, or `pipx install s
 ### Work with an AI agent
 
 - **MCP server:** opencode, Claude Code and other MCP clients ask SrcWranglr for symbols, call graphs, cross references, findings and strings instead of grepping and reading whole files (`srcwranglr --mcp`). With the app open, the agent shares its index, and the **Agent** pane shows each call as it comes; notes the agent adds appear in Notes.
-- **AAVR assessments:** start a run of AAVR vulnerability-research skills in opencode from the Agent pane, and follow it there: phases, candidates, attack surfaces, fuzz targets and crashes, each a click from its code. The agent gets tools for each phase: input paths, value traces, fuzz-target ranking, harness drafts with Makefiles, semgrep rule drafts, journal entries and SARIF import.
+- **AAVR assessments:** start a run of AAVR vulnerability-research skills in opencode from the Agent pane, and follow it there: phases, candidates, attack surfaces, fuzz targets and crashes, each a click from its code. The agent gets tools for each phase: input paths, value traces, fuzz-target ranking, harness drafts with Makefiles, semgrep rule drafts, journal entries and SARIF import. The run's confirmed candidates also appear in the Findings window, tagged `AAVR agent` so you can tell them from the scanners'.
+- **Run the agent inside SrcWranglr:** instead of an external client, set a model and API key in **Settings → Agent** and click **Run in SrcWranglr** on the Agent pane — SrcWranglr drives the same AAVR workflow itself. With your approval for each command, it builds the harnesses it drafts, runs them under sanitizers, and reproduces crashes; the live transcript, the command approvals, and a **Stop** that halts the run and anything it is running are all in the Agent pane. This is the one time SrcWranglr runs code from the tree — see [Limitations](#limitations).
 - **Prompt-injection tripwire:** comments and strings that read like instructions to an AI (or hide text in invisible characters) are findings. Confirm one and SrcWranglr withholds it from agents; unreviewed ones are marked wherever the agent sees them.
 
 ### Keep your investigation organized
@@ -126,6 +127,7 @@ SrcWranglr uses tree-sitter for syntax-based indexing and heuristic name resolut
 - **Analysis coverage:** unresolved indirect calls, function pointers, pointer aliases, and checks that constrain a value are not fully modeled. Reachability can include calls that do not receive the input, and a finding without an input tag is not proven unreachable. A displayed trace describes a possible path, not a confirmed vulnerability.
 - **Resource limits:** indexing defaults to 100,000 source files and skips files larger than 2 MiB with a warning. Analysis also has time and traversal limits and reports when a trace is cut short.
 - **Harness drafts:** generated fuzz harnesses need review and may need changes before they compile, particularly around macros, include order, and project-specific types.
+- **Running code:** SrcWranglr indexes the project and never builds or runs it — with one exception. When the in-app agent asks to run a command and you approve it, that command runs in the project folder, which executes code from the tree you are auditing. Treat an unfamiliar tree as hostile: read each command before approving, and the external MCP server never runs commands at all.
 
 Detailed behavior is documented in the [user guide](docs/guide.md#limitations).
 
