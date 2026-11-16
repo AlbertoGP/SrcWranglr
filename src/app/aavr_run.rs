@@ -46,6 +46,10 @@ pub enum PhaseStatus {
     Done,
     Next,
     Blocked,
+    /// The run went past this phase without marking it done (the agent
+    /// didn't run it as a named step). Distinct from a phase not yet
+    /// reached.
+    Skipped,
     Pending,
 }
 
@@ -271,17 +275,27 @@ fn phases_of(state: Option<&Value>) -> Phases {
         .and_then(|s| s.get("next_phase"))
         .and_then(Value::as_str)
         .map(normalized);
+    // A completed-phase string matches a phase by its head, before any note
+    // the agent appends (`fuzz-campaign (runs 001-7)` → `fuzz-campaign`).
+    let is_done = |name: &str| done.iter().any(|d| head(d) == name);
+    // The furthest phase reached, so an earlier unmarked phase reads as
+    // skipped (the run moved past it), not as "not started yet".
+    let reached = PHASES.iter().rposition(|(name, _)| is_done(name));
     let phases = PHASES
         .iter()
-        .map(|(name, label)| {
-            let status = match (
-                done.iter().any(|d| d == name),
-                next.as_deref() == Some(*name),
-            ) {
-                (true, _) => PhaseStatus::Done,
-                (false, true) if !blocked_on.is_empty() => PhaseStatus::Blocked,
-                (false, true) => PhaseStatus::Next,
-                (false, false) => PhaseStatus::Pending,
+        .enumerate()
+        .map(|(i, (name, label))| {
+            let is_next = next.as_deref() == Some(*name);
+            let status = if is_done(name) {
+                PhaseStatus::Done
+            } else if is_next && !blocked_on.is_empty() {
+                PhaseStatus::Blocked
+            } else if is_next {
+                PhaseStatus::Next
+            } else if reached.is_some_and(|r| i < r) {
+                PhaseStatus::Skipped
+            } else {
+                PhaseStatus::Pending
             };
             (*label, status)
         })
@@ -297,6 +311,17 @@ fn phases_of(state: Option<&Value>) -> Phases {
 fn normalized(name: &str) -> String {
     let lower = name.trim().to_ascii_lowercase().replace('_', "-");
     lower.strip_prefix("aavr-").unwrap_or(&lower).to_string()
+}
+
+/// The phase name at the head of a (normalized) completed-phase string,
+/// before any note the agent appends: `fuzz-campaign (runs 001-7)` and
+/// `report (session 5 update)` as `fuzz-campaign` and `report`.
+fn head(completed: &str) -> &str {
+    completed
+        .split([' ', '('])
+        .next()
+        .unwrap_or(completed)
+        .trim()
 }
 
 /// The triaged findings in `findings/<id>.json`.

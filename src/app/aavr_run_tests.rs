@@ -147,3 +147,52 @@ fn hostile_files_are_reported_not_followed() {
     );
     assert!(run.problems.len() >= 3, "{:?}", run.problems);
 }
+
+#[test]
+fn a_passed_phase_reads_as_skipped_and_suffixed_names_still_count() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(
+        dir.path(),
+        "state.json",
+        r#"{"completed_phases": ["repository-recon", "attack-surface",
+            "fuzz-campaign (runs 001-7)", "report (session 5 update)"], "blocked_on": []}"#,
+    );
+    let run = read(dir.path()).expect("run");
+    let by = |label: &str| {
+        run.phases
+            .iter()
+            .find(|(l, _)| *l == label)
+            .map(|(_, s)| *s)
+            .expect(label)
+    };
+    // The agent appends notes to phase names; the head still matches.
+    assert_eq!(by("Campaign"), PhaseStatus::Done);
+    assert_eq!(by("Report"), PhaseStatus::Done);
+    assert_eq!(by("Recon"), PhaseStatus::Done);
+    // Phases the run passed without marking read as skipped, not pending.
+    assert_eq!(by("Build"), PhaseStatus::Skipped);
+    assert_eq!(by("Static analysis"), PhaseStatus::Skipped);
+    assert_eq!(by("Crashes"), PhaseStatus::Skipped);
+}
+
+#[test]
+fn phases_after_the_furthest_reached_stay_pending() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(
+        dir.path(),
+        "state.json",
+        r#"{"completed_phases": ["repository-recon"], "blocked_on": []}"#,
+    );
+    let run = read(dir.path()).expect("run");
+    let by = |label: &str| {
+        run.phases
+            .iter()
+            .find(|(l, _)| *l == label)
+            .map(|(_, s)| *s)
+            .expect(label)
+    };
+    assert_eq!(by("Recon"), PhaseStatus::Done);
+    // Nothing was passed, so later phases are pending, not skipped.
+    assert_eq!(by("Build"), PhaseStatus::Pending);
+    assert_eq!(by("Report"), PhaseStatus::Pending);
+}

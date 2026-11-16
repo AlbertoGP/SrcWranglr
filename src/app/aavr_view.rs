@@ -218,7 +218,8 @@ fn run_contents(ui: &mut egui::Ui, run: &AavrRun) -> Option<AavrAction> {
     action
 }
 
-/// The phases in a wrapped row: ✓ done, → next, ⏸ blocked, · not yet.
+/// The phases in a wrapped row: ✓ done, → next, ⏸ blocked, – skipped (the
+/// run passed it unmarked), · not yet.
 fn phases(ui: &mut egui::Ui, run: &AavrRun) {
     ui.horizontal_wrapped(|ui| {
         for (label, status) in &run.phases {
@@ -230,9 +231,13 @@ fn phases(ui: &mut egui::Ui, run: &AavrRun) {
                 PhaseStatus::Blocked => RichText::new(format!("⏸ {label}"))
                     .color(BLOCKED_COLOR)
                     .strong(),
+                PhaseStatus::Skipped => RichText::new(format!("– {label}")).strikethrough().weak(),
                 PhaseStatus::Pending => RichText::new(format!("· {label}")).weak(),
             };
-            ui.label(text);
+            let response = ui.label(text);
+            if matches!(status, PhaseStatus::Skipped) {
+                response.on_hover_text("The run moved past this phase without marking it done.");
+            }
         }
     });
 }
