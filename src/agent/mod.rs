@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 pub mod llm;
+pub mod openai;
 pub mod prompt;
 pub mod session;
 pub mod tools;

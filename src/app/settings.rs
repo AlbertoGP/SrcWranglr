@@ -42,6 +42,45 @@ pub struct Settings {
     pub symbol_font: SymbolFont,
     /// The font the top bar is drawn in.
     pub bar_font: BarFont,
+    /// Where the in-app agent's model is, and the key for it.
+    pub agent: AgentSettings,
+}
+
+/// The model the in-app agent uses: an OpenAI-compatible endpoint (z.ai,
+/// OpenRouter, OpenAI, a local server), the model id, and the key. The key
+/// is kept in the settings file, so only enter one on a machine you trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSettings {
+    pub base_url: String,
+    pub model: String,
+    pub api_key: String,
+}
+
+/// z.ai's GLM coding-plan endpoint; change it for another provider.
+pub const DEFAULT_AGENT_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            base_url: DEFAULT_AGENT_BASE_URL.to_string(),
+            model: String::new(),
+            api_key: String::new(),
+        }
+    }
+}
+
+impl AgentSettings {
+    /// The provider to talk to, if it's filled in enough to try.
+    // Consumed by the agent pane (next); keep until it lands.
+    #[allow(dead_code)]
+    pub fn provider(&self) -> Option<crate::agent::openai::Provider> {
+        let provider = crate::agent::openai::Provider {
+            base_url: self.base_url.trim().to_string(),
+            model: self.model.trim().to_string(),
+            api_key: self.api_key.trim().to_string(),
+        };
+        provider.is_ready().then_some(provider)
+    }
 }
 
 impl Settings {
@@ -84,12 +123,14 @@ impl Settings {
                 })?
             }
         };
+        let agent = agent_of(doc.get("agent"))?;
         let settings = Self {
             editor,
             tool_dirs,
             scheme,
             symbol_font,
             bar_font,
+            agent,
         };
         settings.check()?;
         Ok(settings)
@@ -118,6 +159,21 @@ impl Settings {
         doc["source_colors"] = value(self.scheme.id());
         doc["symbol_font"] = value(self.symbol_font.id());
         doc["bar_font"] = value(self.bar_font.id());
+        // The [agent] table is only written once configured, so a file
+        // from someone who never uses the agent stays clean.
+        if self.agent != AgentSettings::default()
+            && (!self.agent.model.trim().is_empty() || !self.agent.api_key.trim().is_empty())
+        {
+            let mut agent = toml_edit::Table::new();
+            agent["base_url"] = value(self.agent.base_url.as_str());
+            agent["model"] = value(self.agent.model.as_str());
+            if !self.agent.api_key.trim().is_empty() {
+                agent["api_key"] = value(self.agent.api_key.as_str());
+            }
+            doc["agent"] = Item::Table(agent);
+        } else {
+            doc.remove("agent");
+        }
         doc.to_string()
     }
 
@@ -201,6 +257,35 @@ pub fn settings_path() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join(SETTINGS_FILE))
 }
 
+/// The `[agent]` table, if present: base_url, model, api_key, each a
+/// string, with the default endpoint when base_url is left out.
+fn agent_of(item: Option<&Item>) -> Result<AgentSettings, String> {
+    let Some(item) = item else {
+        return Ok(AgentSettings::default());
+    };
+    let table = item.as_table_like().ok_or("agent must be a table")?;
+    let string = |key: &str| -> Result<String, String> {
+        match table.get(key) {
+            None => Ok(String::new()),
+            Some(v) => {
+                let text = v.as_str().ok_or(format!("agent.{key} must be a string"))?;
+                check_text(text, &format!("agent.{key}"))?;
+                Ok(text.trim().to_string())
+            }
+        }
+    };
+    let base_url = string("base_url")?;
+    Ok(AgentSettings {
+        base_url: if base_url.is_empty() {
+            DEFAULT_AGENT_BASE_URL.to_string()
+        } else {
+            base_url
+        },
+        model: string("model")?,
+        api_key: string("api_key")?,
+    })
+}
+
 fn tool_dirs_of(item: &Item) -> Result<Vec<PathBuf>, String> {
     let list = item
         .as_array()
@@ -246,7 +331,40 @@ mod tests {
             scheme: Scheme::SolarizedDark,
             symbol_font: SymbolFont::Iosevka,
             bar_font: BarFont::SourceCodePro,
+            agent: AgentSettings::default(),
         }
+    }
+
+    #[test]
+    fn the_agent_provider_round_trips_and_a_bare_file_has_no_agent_table() {
+        // A default (unconfigured) agent isn't written.
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("srcwranglr").join(SETTINGS_FILE);
+        sample().save_to(&path).expect("saved");
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("[agent]"));
+        assert_eq!(
+            Settings::default().agent.provider(),
+            None,
+            "empty is not ready"
+        );
+
+        // A configured one round-trips and yields a provider.
+        let mut configured = sample();
+        configured.agent = AgentSettings {
+            base_url: "https://api.z.ai/api/coding/paas/v4".into(),
+            model: "glm-5.3".into(),
+            api_key: "secret".into(),
+        };
+        configured.save_to(&path).expect("saved");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("[agent]") && text.contains("model = \"glm-5.3\""),
+            "{text}"
+        );
+        let loaded = Settings::load_from(&path).expect("loaded");
+        assert_eq!(loaded.agent, configured.agent);
+        let provider = loaded.agent.provider().expect("ready");
+        assert_eq!(provider.model, "glm-5.3");
     }
 
     #[test]

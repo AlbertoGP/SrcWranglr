@@ -145,6 +145,8 @@ impl SettingsView {
             scheme: self.scheme,
             symbol_font: self.symbol_font,
             bar_font: self.bar_font,
+            // The agent provider isn't edited in this window yet; keep it.
+            agent: self.applied.agent.clone(),
         };
         settings.check()?;
         Ok(settings)
@@ -521,6 +523,7 @@ mod tests {
             scheme: Scheme::Monokai,
             symbol_font: SymbolFont::SourceCodePro,
             bar_font: BarFont::Iosevka,
+            agent: crate::app::settings::AgentSettings::default(),
         };
         let mut harness = harness(&settings);
         harness.get_by_label("Done").click();
