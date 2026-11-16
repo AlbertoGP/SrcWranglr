@@ -61,6 +61,12 @@ impl AavrView {
     }
 
     /// Shows `job` (opencode's `mcp add`) running, then what it said.
+    /// The AAVR run last read, if any — its confirmed candidates feed the
+    /// Findings window.
+    pub fn run(&self) -> Option<&AavrRun> {
+        self.run.as_ref()
+    }
+
     pub fn connect(&mut self, job: BackgroundJob<String>) {
         self.connecting = Some(job);
         self.message = Some(Ok("Connecting SrcWranglr to opencode…".into()));

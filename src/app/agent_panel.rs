@@ -95,6 +95,12 @@ impl AgentPanel {
         self.events.truncate(MAX_EVENTS);
     }
 
+    /// The agent's AAVR run (Assessment tab), whose confirmed candidates
+    /// feed the Findings window.
+    pub fn assessment_run(&self) -> Option<&crate::app::aavr_run::AavrRun> {
+        self.assessment.run()
+    }
+
     /// Appends a step of the in-app run to its transcript.
     pub fn push_in_app(&mut self, event: AgentStep) {
         let line = match event {

@@ -167,6 +167,8 @@ impl SrcWranglrApp {
         // Where you were in the project before, for when it opens again.
         self.remember_session();
         self.findings = Findings::for_graph(&project.graph, self.dangerous.merged());
+        // The agent findings belong to the old project; re-synced for this one.
+        self.agent_findings_key = None;
         self.reach = Reach::of(&project.graph);
         self.strings_panel
             .set_strings(super::strings::entries(&project.graph));

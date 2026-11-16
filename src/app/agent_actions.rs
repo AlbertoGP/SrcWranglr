@@ -169,6 +169,29 @@ impl SrcWranglrApp {
         }
     }
 
+    /// Brings the agent's confirmed AAVR candidates into the Findings
+    /// window, rebuilt only when they change (the run is re-read on a
+    /// timer). Rejected and speculative ones stay in the Assessment tab.
+    pub(super) fn sync_agent_findings(&mut self) {
+        let key = self
+            .agent_panel
+            .assessment_run()
+            .map(super::agent_findings::key);
+        if key == self.agent_findings_key {
+            return;
+        }
+        self.agent_findings_key = key;
+        let found = self
+            .agent_panel
+            .assessment_run()
+            .map(|run| super::agent_findings::findings(run, &self.project.graph))
+            .unwrap_or_default();
+        self.findings = self
+            .findings
+            .with_tool_results(super::agent_findings::TOOL, found);
+        self.refresh_verdicts();
+    }
+
     /// Drains the in-app run's steps and requests each frame, and ends it
     /// when it's done.
     pub(super) fn poll_in_app(&mut self, ctx: &egui::Context) {

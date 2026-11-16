@@ -6,6 +6,7 @@ mod aavr_view;
 mod about;
 mod agent_actions;
 mod agent_bridge;
+mod agent_findings;
 mod agent_panel;
 mod assessment;
 mod background;
@@ -239,6 +240,9 @@ pub struct SrcWranglrApp {
     todo_panel: todo_panel::TodoPanel,
     /// A run of the model loop inside SrcWranglr, if one is going.
     in_app_run: Option<in_app_agent::InAppRun>,
+    /// Signature of the agent findings last merged in, so they are rebuilt
+    /// only when the AAVR run's confirmed candidates change.
+    agent_findings_key: Option<String>,
     /// The open project served to agents, and what they asked.
     agent: agent_bridge::AgentBridge,
     agent_panel: agent_panel::AgentPanel,
@@ -300,6 +304,7 @@ impl SrcWranglrApp {
             todos_error: None,
             todo_panel: todo_panel::TodoPanel::default(),
             in_app_run: None,
+            agent_findings_key: None,
             agent: agent_bridge::AgentBridge::default(),
             agent_panel: agent_panel::AgentPanel::default(),
             journal: Default::default(),
@@ -428,6 +433,7 @@ impl eframe::App for SrcWranglrApp {
         self.poll_docs(&ctx);
         self.poll_agent(&ctx);
         self.poll_in_app(&ctx);
+        self.sync_agent_findings();
         // Global shortcuts pause while the palette or a dialog is open.
         let is_dialog_open = self.note_editor.is_some()
             || self.finding_view.is_some()
