@@ -244,3 +244,26 @@ fn denying_a_command_in_the_pane_tells_the_agent_no() {
     harness.run();
     assert_eq!(answer.try_recv(), Ok(false));
 }
+
+#[test]
+fn stop_agent_is_reachable_while_a_run_is_going() {
+    let mut panel = AgentPanel::default();
+    panel.set_in_app_running(true);
+    let mut harness = harness(panel);
+    harness.get_by_label_contains("Stop agent").click();
+    harness.run();
+    assert!(matches!(
+        harness.state().action,
+        Some(AgentPanelAction::StopInApp)
+    ));
+}
+
+#[test]
+fn stop_agent_is_hidden_when_no_run_is_going() {
+    let panel = AgentPanel::default();
+    let harness = harness(panel);
+    assert!(
+        harness.query_by_label_contains("Stop agent").is_none(),
+        "no Stop button without a run"
+    );
+}

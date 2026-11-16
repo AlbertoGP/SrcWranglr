@@ -35,6 +35,7 @@ pub fn run_tool(
     root: Option<&Path>,
     call: &ToolCall,
     now: u64,
+    cancel: &AtomicBool,
     mut make_write: impl FnMut(AgentWrite) -> Result<String, String>,
     mut approve: impl FnMut(&str) -> bool,
 ) -> Result<String, String> {
@@ -49,7 +50,7 @@ pub fn run_tool(
             .timeout_seconds
             .map(|s| Duration::from_secs(u64::from(s.clamp(1, MAX_COMMAND_SECONDS))))
             .unwrap_or(DEFAULT_TIMEOUT);
-        return exec::run_command(root, &args.command, timeout, MAX_OUTPUT);
+        return exec::run_command(root, &args.command, timeout, MAX_OUTPUT, cancel);
     }
     if WRITE_TOOLS.contains(&tool) {
         let write = agent_write_for(ws, tool, call.arguments.clone(), now)?;
@@ -199,6 +200,7 @@ fn run(
                 root.as_deref(),
                 call,
                 unix_now(),
+                cancel,
                 |write| {
                     ask_main(
                         to_main,
@@ -291,6 +293,7 @@ mod tests {
             None,
             &call("find_symbol", json!({"query": "helper"})),
             0,
+            &AtomicBool::new(false),
             |_| panic!("not a write"),
             |_| panic!("not a command"),
         )
@@ -312,6 +315,7 @@ mod tests {
             Some(dir.path()),
             &call("add_note", json!({"target": "helper", "text": "look here"})),
             0,
+            &AtomicBool::new(false),
             |write| {
                 got = Some(write);
                 Ok("noted".into())
@@ -333,6 +337,7 @@ mod tests {
             Some(dir.path()),
             &call("run_command", json!({"command": "echo ran > out.txt"})),
             0,
+            &AtomicBool::new(false),
             |_| panic!("not a write"),
             |_| false,
         )
@@ -345,6 +350,7 @@ mod tests {
             Some(dir.path()),
             &call("run_command", json!({"command": "echo hi"})),
             0,
+            &AtomicBool::new(false),
             |_| panic!("not a write"),
             |cmd| {
                 assert_eq!(cmd, "echo hi");

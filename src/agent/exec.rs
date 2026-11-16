@@ -7,6 +7,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use schemars::JsonSchema;
@@ -28,13 +29,16 @@ pub struct RunCommandArgs {
 }
 
 /// Runs `command` with `sh -c` in `root`, capped at `max_output` bytes of
-/// output and killed after `timeout`. A non-zero exit is reported in the
+/// output and killed after `timeout`. It is also killed as soon as `cancel`
+/// is set, so stopping the agent ends a running build or fuzzer within a
+/// tick rather than at its timeout. A non-zero exit is reported in the
 /// output, not as an error; only a command that can't start is an error.
 pub fn run_command(
     root: &Path,
     command: &str,
     timeout: Duration,
     max_output: usize,
+    cancel: &AtomicBool,
 ) -> Result<String, String> {
     let command = command.trim();
     if command.is_empty() {
@@ -53,9 +57,16 @@ pub fn run_command(
     let stdout = capped_reader(child.stdout.take(), cap);
     let stderr = capped_reader(child.stderr.take(), cap);
     let deadline = Instant::now() + timeout;
+    let mut stopped = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
+            Ok(None) if cancel.load(Ordering::Relaxed) => {
+                stopped = true;
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -73,6 +84,7 @@ pub fn run_command(
             Some(code) => format!("exit {code}"),
             None => "killed by a signal".to_string(),
         },
+        None if stopped => "stopped by the user".to_string(),
         None => format!("killed after {}s (timed out)", timeout.as_secs()),
     };
     let mut text = format!("$ {command}\n({line})");
@@ -111,11 +123,23 @@ fn capped_reader<R: Read + Send + 'static>(
 mod tests {
     use super::*;
 
+    /// A cancel flag that is never set, for the ordinary cases.
+    fn never() -> AtomicBool {
+        AtomicBool::new(false)
+    }
+
     #[test]
     fn a_command_runs_in_the_folder_and_its_output_comes_back() {
         let dir = tempfile::tempdir().expect("dir");
         std::fs::write(dir.path().join("marker.txt"), "x").expect("write");
-        let out = run_command(dir.path(), "echo hi; ls", DEFAULT_TIMEOUT, MAX_OUTPUT).expect("ran");
+        let out = run_command(
+            dir.path(),
+            "echo hi; ls",
+            DEFAULT_TIMEOUT,
+            MAX_OUTPUT,
+            &never(),
+        )
+        .expect("ran");
         assert!(out.contains("exit 0"), "{out}");
         assert!(out.contains("hi"), "{out}");
         assert!(out.contains("marker.txt"), "ran in the folder: {out}");
@@ -129,6 +153,7 @@ mod tests {
             "echo oops >&2; exit 3",
             DEFAULT_TIMEOUT,
             MAX_OUTPUT,
+            &never(),
         )
         .expect("ran");
         assert!(out.contains("exit 3"), "{out}");
@@ -143,9 +168,28 @@ mod tests {
             "sleep 10",
             Duration::from_millis(300),
             MAX_OUTPUT,
+            &never(),
         )
         .expect("ran");
         assert!(out.contains("timed out"), "{out}");
+    }
+
+    #[test]
+    fn a_cancelled_command_is_killed_at_once() {
+        let dir = tempfile::tempdir().expect("dir");
+        // Already cancelled: a long command is killed on the first poll,
+        // well before its generous timeout.
+        let start = Instant::now();
+        let out = run_command(
+            dir.path(),
+            "sleep 30",
+            DEFAULT_TIMEOUT,
+            MAX_OUTPUT,
+            &AtomicBool::new(true),
+        )
+        .expect("ran");
+        assert!(out.contains("stopped by the user"), "{out}");
+        assert!(start.elapsed() < Duration::from_secs(5), "killed promptly");
     }
 
     #[test]
@@ -156,6 +200,7 @@ mod tests {
             "yes abcdefgh | head -c 200000",
             DEFAULT_TIMEOUT,
             4096,
+            &never(),
         )
         .expect("ran");
         assert!(out.contains("truncated"), "{}", &out[..out.len().min(200)]);

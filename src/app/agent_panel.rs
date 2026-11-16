@@ -189,26 +189,22 @@ impl AgentPanel {
         shown.and_then(|shown| shown.inner)
     }
 
-    /// The in-app agent's run, when there is one: command approvals it is
-    /// waiting on, its transcript, and a Stop button.
-    fn in_app_section(&mut self, ui: &mut egui::Ui) -> Option<AgentPanelAction> {
+    /// The in-app agent's run, when there is one: its status, the command
+    /// approvals it is waiting on, and its transcript. Stop is in the tab
+    /// row, so it stays reachable from either tab.
+    fn in_app_section(&mut self, ui: &mut egui::Ui) {
         if !self.in_app_running && self.in_app_log.is_empty() {
-            return None;
+            return;
         }
         ui.separator();
-        let mut action = None;
-        ui.horizontal(|ui| {
-            let label = match self.in_app_running {
-                true => RichText::new("Agent running in SrcWranglr…")
+        match self.in_app_running {
+            true => ui.label(
+                RichText::new("Agent running in SrcWranglr — Stop is by the tabs above.")
                     .color(NEXT_COLOR)
                     .strong(),
-                false => RichText::new("Agent run finished.").weak(),
-            };
-            ui.label(label);
-            if self.in_app_running && ui.button("Stop").clicked() {
-                action = Some(AgentPanelAction::StopInApp);
-            }
-        });
+            ),
+            false => ui.label(RichText::new("Agent run finished.").weak()),
+        };
         // Commands waiting on the user; each blocks the agent until answered.
         self.commands.retain(|(command, reply)| {
             let mut keep = true;
@@ -247,7 +243,6 @@ impl AgentPanel {
                 });
             ui.separator();
         }
-        action
     }
 
     /// The pending approvals, each with Approve/Reject. Returns the user's
@@ -355,10 +350,23 @@ impl AgentPanel {
             Serving::On { .. } => ui.weak("Serving this project to agents."),
             Serving::Off(why) => ui.label(RichText::new(why).color(ERROR_COLOR)),
         };
+        let mut stop = None;
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tab, Tab::Calls, "Calls");
             ui.selectable_value(&mut self.tab, Tab::Assessment, "Assessment");
+            if self.in_app_running
+                && ui
+                    .button(RichText::new("Stop agent").color(ERROR_COLOR))
+                    .on_hover_text("Halt the in-app agent and kill anything it is running")
+                    .clicked()
+            {
+                stop = Some(AgentPanelAction::StopInApp);
+            }
         });
+        // Reachable on either tab while a run is going.
+        if stop.is_some() {
+            return stop;
+        }
         if self.tab == Tab::Assessment {
             let launcher = self.launcher.clone().unwrap_or_default();
             return self
@@ -376,9 +384,7 @@ impl AgentPanel {
                 self.events.clear();
             }
         });
-        if let Some(action) = self.in_app_section(ui) {
-            return Some(action);
-        }
+        self.in_app_section(ui);
         if let Some(action) = self.approvals(ui) {
             return Some(action);
         }

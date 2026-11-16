@@ -172,6 +172,9 @@ impl SrcWranglrApp {
             .set_strings(super::strings::entries(&project.graph));
         // Their results belong to the old project.
         self.tool_jobs.clear();
+        // Halt any in-app agent run (and the command it was running) for the
+        // old project before this one takes its place.
+        self.stop_in_app_agent();
         self.finding_view = None;
         self.survey_view.reset();
         self.harness_view = None;
