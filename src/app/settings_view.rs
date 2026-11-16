@@ -9,7 +9,7 @@ use egui::{Id, RichText};
 
 use super::dialogs::{self, DialogState, PendingDialog};
 use super::fonts::{BarFont, SymbolFont};
-use super::settings::Settings;
+use super::settings::{AgentSettings, Settings, DEFAULT_AGENT_BASE_URL};
 use crate::analysis::tools::Tool;
 use crate::code_view::scheme::{show_sample, Scheme};
 use crate::programs::SearchPath;
@@ -67,6 +67,10 @@ pub struct SettingsView {
     scheme: Scheme,
     symbol_font: SymbolFont,
     bar_font: BarFont,
+    /// The model SrcWranglr's own agent uses, its API key, and endpoint.
+    agent_model: String,
+    agent_key: String,
+    agent_base_url: String,
     /// The settings in use; edits that differ from them are applied.
     applied: Settings,
     /// Why the last change couldn't be saved, or a folder couldn't be
@@ -112,6 +116,9 @@ impl SettingsView {
             scheme: settings.scheme,
             symbol_font: settings.symbol_font,
             bar_font: settings.bar_font,
+            agent_model: settings.agent.model.clone(),
+            agent_key: settings.agent.api_key.clone(),
+            agent_base_url: settings.agent.base_url.clone(),
             applied: settings.clone(),
             error: None,
             is_typing: false,
@@ -145,8 +152,14 @@ impl SettingsView {
             scheme: self.scheme,
             symbol_font: self.symbol_font,
             bar_font: self.bar_font,
-            // The agent provider isn't edited in this window yet; keep it.
-            agent: self.applied.agent.clone(),
+            agent: AgentSettings {
+                base_url: match self.agent_base_url.trim() {
+                    "" => DEFAULT_AGENT_BASE_URL.to_string(),
+                    url => url.to_string(),
+                },
+                model: self.agent_model.trim().to_string(),
+                api_key: self.agent_key.trim().to_string(),
+            },
         };
         settings.check()?;
         Ok(settings)
@@ -180,10 +193,12 @@ impl SettingsView {
                     ui.separator();
                     let is_typing_folders = self.tools_section(ui, ctx);
                     ui.separator();
+                    let is_typing_agent = self.agent_section(ui);
+                    ui.separator();
                     self.colors_section(ui);
                     ui.separator();
                     self.font_section(ui);
-                    is_typing_command || is_typing_folders
+                    is_typing_command || is_typing_folders || is_typing_agent
                 })
                 .inner;
             ui.separator();
@@ -318,6 +333,47 @@ impl SettingsView {
         };
         self.found = Some(found.clone());
         found
+    }
+
+    /// The in-app agent's model, API key and endpoint, under a collapsing
+    /// header. Returns whether a field is being typed in (so a half-typed
+    /// key isn't saved yet).
+    fn agent_section(&mut self, ui: &mut egui::Ui) -> bool {
+        let field =
+            |ui: &mut egui::Ui, label: &str, text: &mut String, hint: &str, secret: bool| {
+                let mut focused = false;
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    let edit = egui::TextEdit::singleline(text)
+                        .password(secret)
+                        .hint_text(hint)
+                        .desired_width(f32::INFINITY);
+                    focused = ui.add(edit).has_focus();
+                });
+                focused
+            };
+        egui::CollapsingHeader::new("Agent")
+            .show(ui, |ui| {
+                ui.label("The model SrcWranglr's own agent uses (any OpenAI-compatible endpoint).");
+                let mut typing = false;
+                typing |= field(ui, "Model:", &mut self.agent_model, "glm-4.6", false);
+                typing |= field(ui, "API key:", &mut self.agent_key, "pasted here", true);
+                typing |= field(
+                    ui,
+                    "Endpoint:",
+                    &mut self.agent_base_url,
+                    DEFAULT_AGENT_BASE_URL,
+                    false,
+                );
+                ui.weak(
+                    "The key is kept in plain text in settings.toml. Leave the endpoint blank \
+                     for z.ai. Then start a run with 'Run in SrcWranglr' on the Agent pane's \
+                     Assessment tab.",
+                );
+                typing
+            })
+            .body_returned
+            .unwrap_or(false)
     }
 
     fn colors_section(&mut self, ui: &mut egui::Ui) {
@@ -581,5 +637,17 @@ mod tests {
             ..SettingsView::new(&Settings::default())
         };
         assert!(relative.draft().is_err_and(|e| e.contains("full path")));
+    }
+
+    #[test]
+    fn the_agent_fields_become_the_saved_provider() {
+        let mut view = SettingsView::new(&Settings::default());
+        view.agent_model = "glm-4.6".into();
+        view.agent_key = "secret".into();
+        let settings = view.draft().expect("valid");
+        assert_eq!(settings.agent.model, "glm-4.6");
+        assert_eq!(settings.agent.api_key, "secret");
+        assert_eq!(settings.agent.base_url, DEFAULT_AGENT_BASE_URL);
+        assert!(settings.agent.provider().is_some(), "ready to run");
     }
 }
