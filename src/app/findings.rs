@@ -166,6 +166,7 @@ fn own_findings(graph: &CodeGraph, list: &DangerousList) -> Vec<Finding> {
     let mut found = risky_calls(graph, list);
     found.extend(silencing_comments(graph));
     found.extend(injection::findings(graph));
+    found.extend(crate::analysis::memory::findings(graph));
     found
 }
 

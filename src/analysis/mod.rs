@@ -11,6 +11,7 @@ pub mod heuristics;
 pub mod includes;
 pub mod injection;
 pub mod lookalike;
+pub mod memory;
 pub mod reach;
 pub mod risky;
 pub mod sarif;

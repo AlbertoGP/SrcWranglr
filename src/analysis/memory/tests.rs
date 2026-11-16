@@ -1,0 +1,154 @@
+use super::findings;
+use crate::analysis::Severity;
+use crate::index::graph_of_files;
+
+/// (rule, line) of each finding the walk makes for `source`.
+fn rules(source: &str) -> Vec<(String, u32)> {
+    findings(&graph_of_files(&[("a.c", source)]))
+        .into_iter()
+        .map(|f| (f.rule, f.line))
+        .collect()
+}
+
+#[test]
+fn freeing_then_dereferencing_is_use_after_free() {
+    let found = rules(
+        "void f(char *p) {\n\
+         \x20   free(p);\n\
+         \x20   *p = 0;\n\
+         }\n",
+    );
+    assert_eq!(found, [("use-after-free".to_string(), 3)]);
+}
+
+#[test]
+fn freeing_twice_is_double_free() {
+    let found = rules(
+        "void f(char *p) {\n\
+         \x20   free(p);\n\
+         \x20   free(p);\n\
+         }\n",
+    );
+    assert_eq!(found, [("double-free".to_string(), 3)]);
+}
+
+#[test]
+fn passing_a_freed_pointer_to_a_call_is_use_after_free() {
+    let found = rules(
+        "void g(char *q);\n\
+         void f(char *p) {\n\
+         \x20   free(p);\n\
+         \x20   g(p);\n\
+         }\n",
+    );
+    assert_eq!(found, [("use-after-free".to_string(), 4)]);
+}
+
+#[test]
+fn reallocating_before_the_use_is_fine() {
+    let found = rules(
+        "void f(char *p, int n) {\n\
+         \x20   free(p);\n\
+         \x20   p = malloc(n);\n\
+         \x20   *p = 0;\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn nulling_after_free_is_not_a_use_after_free() {
+    let found = rules(
+        "void f(char *p) {\n\
+         \x20   free(p);\n\
+         \x20   p = 0;\n\
+         \x20   g(p);\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn using_before_the_free_is_fine() {
+    let found = rules(
+        "void f(char *p) {\n\
+         \x20   *p = 0;\n\
+         \x20   free(p);\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_function_that_never_frees_has_no_findings() {
+    let found = rules(
+        "void f(char *p) {\n\
+         \x20   *p = 0;\n\
+         \x20   p[1] = 1;\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_straight_line_use_after_free_is_high_severity() {
+    let graph = graph_of_files(&[("a.c", "void f(char *p) {\n   free(p);\n   *p = 0;\n}\n")]);
+    let found = findings(&graph);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].severity, Severity::High);
+    assert_eq!(found[0].cwe, Some(416));
+}
+
+#[test]
+fn freeing_in_one_branch_then_using_is_a_lower_confidence_lead() {
+    // Freed only when c is set, then used unconditionally: a real
+    // use-after-free on that path, flagged at medium (maybe-freed).
+    let graph = graph_of_files(&[(
+        "a.c",
+        "void f(char *p, int c) {\n   if (c) { free(p); }\n   *p = 0;\n}\n",
+    )]);
+    let found = findings(&graph);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].rule, "use-after-free");
+    assert_eq!(found[0].severity, Severity::Medium);
+}
+
+#[test]
+fn the_classic_safe_list_free_loop_is_not_flagged() {
+    // Each node is read into a temp, freed, then the cursor advances — a
+    // correct free loop that a naive checker would flag.
+    let found = rules(
+        "void f(struct n *head) {\n\
+         \x20   struct n *cur = head;\n\
+         \x20   while (cur) {\n\
+         \x20       struct n *next = cur->next;\n\
+         \x20       free(cur);\n\
+         \x20       cur = next;\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn freeing_one_pointer_and_using_another_is_not_flagged() {
+    let found = rules(
+        "void f(char *a, char *b) {\n\
+         \x20   free(a);\n\
+         \x20   *b = 0;\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn freeing_inside_a_branch_with_no_later_use_is_not_flagged() {
+    let found = rules(
+        "void f(char *p, int c) {\n\
+         \x20   if (c) {\n\
+         \x20       free(p);\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
