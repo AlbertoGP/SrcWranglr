@@ -119,6 +119,11 @@ impl NotesPanel {
         notebook: &Notebook,
         journal: &JournalContext,
     ) -> Option<NotesPanelAction> {
+        // Claim the pane's full width so a drag-resize sticks: egui stores
+        // the panel at its content's width on release, and a short tab or a
+        // wide font can otherwise leave the content narrower than the drag,
+        // snapping the pane back.
+        ui.set_min_width(ui.available_width());
         let title = match self.tab {
             NotesTab::Notes => format!("Notes & Bookmarks ({})", notebook.notes().len()),
             NotesTab::Journal => format!("Journal ({})", journal.journal.entries().len()),
@@ -293,5 +298,72 @@ mod tests {
             ["a::parse"]
         );
         assert!(listed(&notes, NotesFilter::Bookmarks, "packet").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use egui::{pos2, vec2};
+
+    use super::*;
+    use crate::app::project::Project;
+    use crate::notes::journal::Journal;
+
+    struct S {
+        panel: NotesPanel,
+        notebook: Notebook,
+        journal: Journal,
+        central_avail: f32,
+    }
+
+    /// Drags the Notes pane's left edge inward to widen it, and reports the
+    /// central space left before and after (less space = a wider pane).
+    fn widen_notes() -> (f32, f32) {
+        let project = Project::demo().expect("demo");
+        let mut panel = NotesPanel::default();
+        panel.set_open(true);
+        let mut harness = crate::app::fonts::test_harness()
+            .with_size(vec2(800.0, 600.0))
+            .with_accessibility_check(false)
+            .build_ui_state(
+                |ui, s: &mut S| {
+                    let context = JournalContext {
+                        journal: &s.journal,
+                        here: None,
+                        storage: Ok("in memory"),
+                        now: 0,
+                    };
+                    s.panel.show(ui, &s.notebook, &context, Layout::default());
+                    s.central_avail = ui.available_width();
+                },
+                S {
+                    panel,
+                    notebook: Notebook::open(&project),
+                    journal: Journal::default(),
+                    central_avail: 0.0,
+                },
+            );
+        let settle = |h: &mut egui_kittest::Harness<S>| (0..40).for_each(|_| h.step());
+        settle(&mut harness);
+        let before = harness.state().central_avail;
+        // The 280-wide pane sits at the right; its handle is near x=520.
+        harness.drag_at(pos2(520.0, 300.0));
+        harness.step();
+        harness.hover_at(pos2(470.0, 300.0));
+        harness.step();
+        harness.hover_at(pos2(420.0, 300.0));
+        harness.step();
+        harness.drop_at(pos2(420.0, 300.0));
+        settle(&mut harness);
+        (before, harness.state().central_avail)
+    }
+
+    #[test]
+    fn dragging_the_edge_widens_the_pane_and_it_sticks() {
+        let (before, after) = widen_notes();
+        assert!(
+            after < before - 40.0,
+            "the pane should stay wider after release: central space {before} -> {after}"
+        );
     }
 }
