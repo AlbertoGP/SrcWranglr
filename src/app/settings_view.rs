@@ -356,7 +356,7 @@ impl SettingsView {
             .show(ui, |ui| {
                 ui.label("The model SrcWranglr's own agent uses (any OpenAI-compatible endpoint).");
                 let mut typing = false;
-                typing |= field(ui, "Model:", &mut self.agent_model, "glm-4.6", false);
+                typing |= field(ui, "Model:", &mut self.agent_model, "glm-5.3", false);
                 typing |= field(ui, "API key:", &mut self.agent_key, "pasted here", true);
                 typing |= field(
                     ui,
