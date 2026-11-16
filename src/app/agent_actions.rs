@@ -10,6 +10,7 @@ use super::editor::{self, SourcePosition};
 
 use super::agent_bridge::{AgentBridge, AgentWrite};
 use super::agent_panel::AgentPanelAction;
+use super::in_app_agent::{InAppRun, ToMain, START_PROMPT};
 use super::{SrcWranglrApp, Status};
 use crate::mcp::dispatch::Place;
 use crate::mcp::tools::notes::NoteChange;
@@ -163,14 +164,87 @@ impl SrcWranglrApp {
                     crate::mcp::format::count(count, "agent verdict")
                 ));
             }
+            Some(AgentPanelAction::StopInApp) => self.stop_in_app_agent(),
             None => {}
         }
+    }
+
+    /// Drains the in-app run's steps and requests each frame, and ends it
+    /// when it's done.
+    pub(super) fn poll_in_app(&mut self, ctx: &egui::Context) {
+        let Some((events, requests, result)) = self.in_app_run.as_ref().map(|run| {
+            let (events, requests) = run.drain();
+            (events, requests, run.result())
+        }) else {
+            return;
+        };
+        for event in events {
+            self.agent_panel.push_in_app(event);
+        }
+        for request in requests {
+            match request {
+                ToMain::Write { write, reply } => {
+                    let _ = reply.send(self.make_agent_write(&write, ctx));
+                }
+                ToMain::Command { command, reply } => {
+                    self.agent_panel.queue_command(command, reply);
+                }
+            }
+        }
+        if let Some(result) = result {
+            self.agent_panel.finish_in_app(&result);
+            self.in_app_run = None;
+        }
+    }
+
+    /// Starts the in-app agent on the open project, or says what's missing.
+    pub(super) fn start_in_app_agent(&mut self, ctx: &egui::Context) {
+        if !self.is_project_open || self.project.root.is_none() {
+            self.status = Status::Info("Open a project folder first.".into());
+            return;
+        }
+        let Some(provider) = self.settings.agent.provider() else {
+            self.status = Status::Info(
+                "Set the agent's model and API key in Settings (the [agent] section) first.".into(),
+            );
+            return;
+        };
+        let client = match crate::agent::openai::OpenAiClient::new(provider) {
+            Ok(client) => Box::new(client) as Box<dyn crate::agent::llm::LlmClient>,
+            Err(error) => {
+                self.status = Status::Error(error);
+                return;
+            }
+        };
+        self.stop_in_app_agent();
+        self.in_app_run = Some(InAppRun::start(
+            client,
+            self.project.name.clone(),
+            self.project.root.clone(),
+            std::sync::Arc::clone(&self.project.graph),
+            START_PROMPT.to_string(),
+            ctx.clone(),
+        ));
+        self.agent_panel.set_in_app_running(true);
+        self.agent_panel.set_open(true);
+        self.status =
+            Status::Info("The agent is running in SrcWranglr. Watch the Agent pane.".into());
+    }
+
+    /// Stops an in-app run and unblocks any thread waiting on approval.
+    pub(super) fn stop_in_app_agent(&mut self) {
+        if let Some(run) = self.in_app_run.take() {
+            run.stop();
+        }
+        // Deny pending commands so a waiting thread winds down.
+        self.agent_panel.finish_in_app(&Ok(String::new()));
     }
 
     fn on_assessment(&mut self, action: AavrAction, ctx: &egui::Context) {
         let search = self.settings.search_path();
         let root = self.project.root.clone();
         match action {
+            AavrAction::RunInApp => self.start_in_app_agent(ctx),
             AavrAction::GoTo { file, line } => self.go_to_place(None, &file, line),
             AavrAction::FindSymbol(name) => match self.project.find(&name) {
                 Some(id) => self.graph_view.select(id),

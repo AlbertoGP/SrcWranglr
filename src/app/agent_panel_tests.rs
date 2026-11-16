@@ -192,3 +192,55 @@ fn a_full_queue_is_reported_not_silently_dropped() {
         "the cap is reported"
     );
 }
+
+#[test]
+fn the_transcript_records_each_step_of_an_in_app_run() {
+    let mut panel = AgentPanel::default();
+    panel.push_in_app(AgentStep::Said("looking".into()));
+    panel.push_in_app(AgentStep::Running {
+        name: "find_symbol".into(),
+        arguments: "{}".into(),
+    });
+    panel.push_in_app(AgentStep::Result {
+        name: "find_symbol".into(),
+        is_error: false,
+        text: "ok\nmore".into(),
+    });
+    assert_eq!(panel.in_app_log.len(), 3);
+    assert!(panel.in_app_log[2].1.contains("find_symbol → ok"));
+}
+
+#[test]
+fn finishing_denies_commands_still_waiting() {
+    let (reply, answer) = std::sync::mpsc::sync_channel(1);
+    let mut panel = AgentPanel::default();
+    panel.set_in_app_running(true);
+    panel.queue_command("echo hi".into(), reply);
+    panel.finish_in_app(&Ok(String::new()));
+    assert_eq!(answer.try_recv(), Ok(false), "a waiting command is denied");
+    assert!(!panel.in_app_running);
+}
+
+#[test]
+fn approving_a_command_in_the_pane_lets_the_agent_run_it() {
+    let (reply, answer) = std::sync::mpsc::sync_channel(1);
+    let mut panel = AgentPanel::default();
+    panel.set_in_app_running(true);
+    panel.queue_command("echo hi".into(), reply);
+    let mut harness = harness(panel);
+    harness.get_by_label_contains("Approve").click();
+    harness.run();
+    assert_eq!(answer.try_recv(), Ok(true));
+}
+
+#[test]
+fn denying_a_command_in_the_pane_tells_the_agent_no() {
+    let (reply, answer) = std::sync::mpsc::sync_channel(1);
+    let mut panel = AgentPanel::default();
+    panel.set_in_app_running(true);
+    panel.queue_command("rm -rf /".into(), reply);
+    let mut harness = harness(panel);
+    harness.get_by_label_contains("Deny").click();
+    harness.run();
+    assert_eq!(answer.try_recv(), Ok(false));
+}

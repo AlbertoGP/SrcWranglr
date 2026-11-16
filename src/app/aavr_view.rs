@@ -32,6 +32,7 @@ pub enum AavrAction {
     GoTo { file: String, line: u32 },
     FindSymbol(String),
     Start,
+    RunInApp,
     Connect,
     OpenReport(String),
 }
@@ -154,6 +155,12 @@ fn launch_buttons(ui: &mut egui::Ui, has_folder: bool, launcher: &Launcher) -> O
             .on_hover_text("Opens opencode on this project in a terminal and asks it to run the aavr-orchestrate skill, with SrcWranglr's tools");
         if start.clicked() {
             action = Some(AavrAction::Start);
+        }
+        let run_in_app = ui
+            .add_enabled(has_folder, egui::Button::new("Run in SrcWranglr"))
+            .on_hover_text("Runs the agent loop inside SrcWranglr using the model set in Settings — no opencode. It builds and runs with your approval; watch the Agent pane.");
+        if run_in_app.clicked() {
+            action = Some(AavrAction::RunInApp);
         }
         if launcher.opencode.is_some() && !launcher.is_connected {
             let connect = ui

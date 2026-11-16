@@ -237,6 +237,8 @@ pub struct SrcWranglrApp {
     /// Why the TODO file couldn't be read; the list is read-only then.
     todos_error: Option<String>,
     todo_panel: todo_panel::TodoPanel,
+    /// A run of the model loop inside SrcWranglr, if one is going.
+    in_app_run: Option<in_app_agent::InAppRun>,
     /// The open project served to agents, and what they asked.
     agent: agent_bridge::AgentBridge,
     agent_panel: agent_panel::AgentPanel,
@@ -297,6 +299,7 @@ impl SrcWranglrApp {
             todos: Default::default(),
             todos_error: None,
             todo_panel: todo_panel::TodoPanel::default(),
+            in_app_run: None,
             agent: agent_bridge::AgentBridge::default(),
             agent_panel: agent_panel::AgentPanel::default(),
             journal: Default::default(),
@@ -424,6 +427,7 @@ impl eframe::App for SrcWranglrApp {
         self.poll_history();
         self.poll_docs(&ctx);
         self.poll_agent(&ctx);
+        self.poll_in_app(&ctx);
         // Global shortcuts pause while the palette or a dialog is open.
         let is_dialog_open = self.note_editor.is_some()
             || self.finding_view.is_some()

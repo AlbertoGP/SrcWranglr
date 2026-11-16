@@ -13,8 +13,11 @@ use super::aavr_view::{AavrAction, AavrView, Launcher};
 use super::agent_bridge::{AgentEvent, Serving};
 use super::layout::Layout;
 use super::pane_bar::{self, Edge};
+use super::visible::visible;
+use crate::agent::session::Event as AgentStep;
 use crate::mcp::dispatch::Place;
 use crate::mcp::tools::verdicts::VerdictChange;
+use std::sync::mpsc::SyncSender;
 
 /// Calls kept; older ones give way.
 const MAX_EVENTS: usize = 500;
@@ -24,6 +27,9 @@ const DEFAULT_WIDTH: f32 = 380.0;
 const MAX_PENDING: usize = 1000;
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x6C);
 const PENDING_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x9A, 0x4C);
+const NEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0x5A, 0xA0, 0xF0);
+/// Height of the in-app transcript scroll area.
+const LIST_HEIGHT: f32 = 260.0;
 /// How often ages are redrawn while calls are shown.
 const AGE_REFRESH: Duration = Duration::from_secs(10);
 
@@ -38,6 +44,13 @@ pub struct AgentPanel {
     tab: Tab,
     /// Risky writes the agent asked for, waiting for the user's yes/no.
     pending: Vec<VerdictChange>,
+    /// The in-app agent's transcript (is_error, line), newest last.
+    in_app_log: Vec<(bool, String)>,
+    /// Commands the in-app agent wants to run, each blocking until the
+    /// user approves or denies it.
+    commands: Vec<(String, SyncSender<bool>)>,
+    /// Whether an in-app run is going.
+    in_app_running: bool,
     pub assessment: AavrView,
     /// opencode and whether it lists SrcWranglr, once looked for.
     launcher: Option<Launcher>,
@@ -58,6 +71,8 @@ pub enum AgentPanelAction {
     ApplyVerdicts(Vec<VerdictChange>),
     /// The user rejected this many (for the status bar).
     RejectVerdicts(usize),
+    /// Stop the in-app agent run.
+    StopInApp,
 }
 
 impl AgentPanel {
@@ -80,6 +95,46 @@ impl AgentPanel {
         self.events.truncate(MAX_EVENTS);
     }
 
+    /// Appends a step of the in-app run to its transcript.
+    pub fn push_in_app(&mut self, event: AgentStep) {
+        let line = match event {
+            AgentStep::Said(text) => (false, format!("agent: {text}")),
+            AgentStep::Running { name, arguments } => (false, format!("▸ {name}  {arguments}")),
+            AgentStep::Result {
+                name,
+                is_error,
+                text,
+            } => {
+                let first = text.lines().next().unwrap_or("").to_string();
+                (is_error, format!("    {name} → {first}"))
+            }
+            AgentStep::Done(text) => (false, format!("✓ {text}")),
+        };
+        self.in_app_log.push(line);
+        let overflow = self.in_app_log.len().saturating_sub(MAX_EVENTS);
+        self.in_app_log.drain(..overflow);
+    }
+
+    /// Queues a command the in-app agent wants to run, for approval.
+    pub fn queue_command(&mut self, command: String, reply: SyncSender<bool>) {
+        self.commands.push((command, reply));
+    }
+
+    pub fn set_in_app_running(&mut self, running: bool) {
+        self.in_app_running = running;
+    }
+
+    /// Ends the in-app run's display; shows why if it failed.
+    pub fn finish_in_app(&mut self, result: &Result<String, String>) {
+        self.in_app_running = false;
+        for (_, reply) in self.commands.drain(..) {
+            let _ = reply.send(false);
+        }
+        if let Err(error) = result {
+            self.in_app_log.push((true, format!("⚠ {error}")));
+        }
+    }
+
     /// Queues a risky verdict for the user to approve. False if the queue
     /// is full (so the agent can be told, not left thinking it's queued).
     pub fn queue_approval(&mut self, change: VerdictChange) -> bool {
@@ -95,6 +150,12 @@ impl AgentPanel {
         self.events.clear();
         self.calls = 0;
         self.pending.clear();
+        self.in_app_log.clear();
+        // Denying frees the agent threads waiting on these.
+        for (_, reply) in self.commands.drain(..) {
+            let _ = reply.send(false);
+        }
+        self.in_app_running = false;
         self.assessment.reset();
     }
 
@@ -126,6 +187,67 @@ impl AgentPanel {
             });
         self.is_open = is_open && self.is_open;
         shown.and_then(|shown| shown.inner)
+    }
+
+    /// The in-app agent's run, when there is one: command approvals it is
+    /// waiting on, its transcript, and a Stop button.
+    fn in_app_section(&mut self, ui: &mut egui::Ui) -> Option<AgentPanelAction> {
+        if !self.in_app_running && self.in_app_log.is_empty() {
+            return None;
+        }
+        ui.separator();
+        let mut action = None;
+        ui.horizontal(|ui| {
+            let label = match self.in_app_running {
+                true => RichText::new("Agent running in SrcWranglr…")
+                    .color(NEXT_COLOR)
+                    .strong(),
+                false => RichText::new("Agent run finished.").weak(),
+            };
+            ui.label(label);
+            if self.in_app_running && ui.button("Stop").clicked() {
+                action = Some(AgentPanelAction::StopInApp);
+            }
+        });
+        // Commands waiting on the user; each blocks the agent until answered.
+        self.commands.retain(|(command, reply)| {
+            let mut keep = true;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!("Run: {}", visible(command)))
+                        .monospace()
+                        .color(PENDING_COLOR),
+                );
+                if ui.button("Approve").clicked() {
+                    let _ = reply.send(true);
+                    keep = false;
+                }
+                if ui.button("Deny").clicked() {
+                    let _ = reply.send(false);
+                    keep = false;
+                }
+            });
+            keep
+        });
+        if !self.in_app_log.is_empty() {
+            egui::ScrollArea::vertical()
+                .max_height(LIST_HEIGHT)
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .id_salt("in_app_log")
+                .show(ui, |ui| {
+                    for (is_error, line) in &self.in_app_log {
+                        let text = RichText::new(line).monospace().small();
+                        ui.label(if *is_error {
+                            text.color(ERROR_COLOR)
+                        } else {
+                            text
+                        });
+                    }
+                });
+            ui.separator();
+        }
+        action
     }
 
     /// The pending approvals, each with Approve/Reject. Returns the user's
@@ -254,6 +376,9 @@ impl AgentPanel {
                 self.events.clear();
             }
         });
+        if let Some(action) = self.in_app_section(ui) {
+            return Some(action);
+        }
         if let Some(action) = self.approvals(ui) {
             return Some(action);
         }
