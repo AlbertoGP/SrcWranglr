@@ -267,3 +267,12 @@ fn stop_agent_is_hidden_when_no_run_is_going() {
         "no Stop button without a run"
     );
 }
+
+#[test]
+fn starting_a_fresh_run_clears_the_previous_transcript() {
+    let mut panel = AgentPanel::default();
+    panel.push_in_app(AgentStep::Done("old run with a 401".into()));
+    assert!(!panel.in_app_log.is_empty());
+    panel.set_in_app_running(true);
+    assert!(panel.in_app_log.is_empty(), "a fresh run starts clean");
+}

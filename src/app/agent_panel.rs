@@ -127,6 +127,14 @@ impl AgentPanel {
     }
 
     pub fn set_in_app_running(&mut self, running: bool) {
+        // A fresh run starts with a clean transcript and no leftover command
+        // approvals, so a previous run's errors don't pile up below it.
+        if running {
+            self.in_app_log.clear();
+            for (_, reply) in self.commands.drain(..) {
+                let _ = reply.send(false);
+            }
+        }
         self.in_app_running = running;
     }
 
@@ -234,7 +242,7 @@ impl AgentPanel {
         if !self.in_app_log.is_empty() {
             egui::ScrollArea::vertical()
                 .max_height(LIST_HEIGHT)
-                .auto_shrink([false, false])
+                .auto_shrink([false, true])
                 .stick_to_bottom(true)
                 .id_salt("in_app_log")
                 .show(ui, |ui| {

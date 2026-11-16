@@ -68,8 +68,13 @@ impl LlmClient for OpenAiClient {
             .json()
             .map_err(|e| format!("the model's reply wasn't JSON ({e})"))?;
         if !status.is_success() {
+            let hint = match status.as_u16() {
+                401 | 403 => " — check the API key in Settings → Agent",
+                429 => " — the provider rate-limited or the plan quota is spent",
+                _ => "",
+            };
             return Err(format!(
-                "the model returned {status}: {}",
+                "the model returned {status}: {}{hint}",
                 error_text(&value)
             ));
         }
