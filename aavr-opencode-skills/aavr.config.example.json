@@ -1,0 +1,7 @@
+{
+  "semgrep": {
+    "rules_path": "/absolute/path/to/aavr-semgrep-rules",
+    "default_confidence": ["high", "medium"],
+    "include_experimental": false
+  }
+}

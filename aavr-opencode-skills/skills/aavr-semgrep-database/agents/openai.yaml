@@ -1,0 +1,3 @@
+interface:
+  display_name: "AAVR Semgrep Database"
+  short_description: "AAVR workflow module for OpenCode"

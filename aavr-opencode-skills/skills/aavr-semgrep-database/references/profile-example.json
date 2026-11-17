@@ -1,0 +1,9 @@
+{
+  "name": "network-daemon",
+  "languages": ["c", "cpp"],
+  "attack_surfaces": ["network-parser"],
+  "categories": ["memory-safety", "integer-overflow", "format-string", "command-injection"],
+  "confidence": ["high", "medium"],
+  "exclude_maturity": ["deprecated"],
+  "include_experimental": false
+}

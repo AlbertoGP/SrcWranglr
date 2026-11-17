@@ -1,0 +1,33 @@
+{
+  "name": "aavr-opencode-skills",
+  "version": "0.2.0",
+  "skills": [
+    "aavr-orchestrate",
+    "aavr-srcwranglr",
+    "aavr-repository-recon",
+    "aavr-build-baseline",
+    "aavr-attack-surface",
+    "aavr-static-analysis",
+    "aavr-finding-triage",
+    "aavr-sanitizer-validation",
+    "aavr-fuzz-target-selection",
+    "aavr-harness-generation",
+    "aavr-fuzz-campaign",
+    "aavr-crash-triage",
+    "aavr-variant-analysis",
+    "aavr-report",
+    "aavr-semgrep-database",
+    "aavr-semgrep-rule-authoring"
+  ],
+  "commands": [
+    "aavr",
+    "aavr-recon",
+    "aavr-baseline",
+    "aavr-triage",
+    "aavr-fuzz",
+    "aavr-report",
+    "aavr-semgrep",
+    "aavr-semgrep-author"
+  ],
+  "model_agnostic": true
+}

@@ -1,0 +1,3 @@
+interface:
+  display_name: "AAVR Fuzz Campaign"
+  short_description: "AAVR workflow module for OpenCode"

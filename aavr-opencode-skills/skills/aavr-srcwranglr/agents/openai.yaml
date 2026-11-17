@@ -1,0 +1,3 @@
+interface:
+  display_name: "AAVR with SrcWranglr"
+  short_description: "Use SrcWranglr's MCP tools in every AAVR phase"
