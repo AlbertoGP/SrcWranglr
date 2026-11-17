@@ -4,10 +4,11 @@ Model-agnostic Agentic Augmented Vulnerability Research workflows for OpenCode. 
 
 ## Install globally
 
+From the SrcWranglr repository:
+
 ```bash
-unzip aavr-opencode-skills.zip
 cd aavr-opencode-skills
-./install.sh
+./install.sh                 # add --skills-only to skip the slash commands
 ```
 
 Restart OpenCode, open a C or C++ repository, and run:
